@@ -93,26 +93,26 @@ class PhiThetaAverager(PhiAverager):
         global_weight_θ = self.basis.global_colatitude_weights(self.dealias[1])
         self.theta_vol = np.sum(global_weight_θ)
 
-        self.global_profile = np.zeros((1, 1, self.shape[2]))
-        self.global_t_profile = np.zeros((3, 1, 1, self.shape[2]))
+        self.pt_global_profile = np.zeros((1, 1, self.shape[2]))
+        self.pt_global_t_profile = np.zeros((3, 1, 1, self.shape[2]))
         
-    def __call__(self, arr, tensor=False):
+    def __call__(self, arr, tensor=False, comm=False):
         """ Takes the azimuthal and colatitude average of the NumPy array arr. """
-        arr = super(PhiThetaAverager, self).__call__(arr, tensor=tensor)
+        arr = super(PhiThetaAverager, self).__call__(arr, tensor=tensor, comm=comm)
         if tensor: 
             arr = arr[:,:,self.gslices[1], self.gslices[2]]
-            local_sum = np.expand_dims(np.sum(self.t_weight_θ*arr, axis=2), axis=2)/self.theta_vol
-            self.global_t_profile *= 0
-            self.global_t_profile[:,:,:, self.gslices[2]] = local_sum.squeeze()
-            self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.global_t_profile, op=MPI.SUM)
-            return self.global_t_profile
+            self.pt_global_t_profile *= 0
+            self.pt_global_t_profile[:,:,:, self.gslices[2]] = np.expand_dims(np.sum(self.t_weight_θ*arr, axis=2), axis=2)/self.theta_vol
+            if comm:
+                self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.pt_global_t_profile, op=MPI.SUM)
+            return self.pt_global_t_profile
         else:
             arr = arr[:,self.gslices[1], self.gslices[2]]
-            local_sum = np.expand_dims(np.sum(self.weight_θ*arr, axis=1), axis=1)/self.theta_vol
-            self.global_profile *= 0
-            self.global_profile[:,:, self.gslices[2]] = local_sum.squeeze()
-            self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.global_profile, op=MPI.SUM)
-            return self.global_profile
+            self.pt_global_profile *= 0
+            self.pt_global_profile[:,:, self.gslices[2]] = np.expand_dims(np.sum(self.weight_θ*arr, axis=1), axis=1)/self.theta_vol
+            if comm:
+                self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.pt_global_profile, op=MPI.SUM)
+            return self.pt_global_profile
 
 class BallVolumeAverager(OutputTask):
 
@@ -197,3 +197,25 @@ class EquatorSlicer(OutputTask):
             if self.tplot:
                 self.global_equator[:,0,self.gslices[2]] = eq_slice
             return self.global_equator
+
+class SphericalShellCommunicator(OutputTask):
+
+    def __init__(self, field):
+        """
+        Initialize the slice plotter.
+
+        # Arguments
+            field (Field) :
+                A dummy field used to figure out integral weights, basis, etc.
+        """
+        super(SphericalShellCommunicator, self).__init__(field)
+        self.buff = np.zeros((self.shape[0], self.shape[1], 1))
+
+    def __call__(self, arr, comm=False):
+        self.buff *= 0
+        if np.prod(arr.shape) > 0:
+            self.buff[self.gslices[0], self.gslices[1], :] = arr
+        if comm:
+            self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.buff, op=MPI.SUM)
+        else:
+            return self.buff

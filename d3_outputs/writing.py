@@ -150,7 +150,7 @@ class ScalarWriter(HandlerWriter):
         super(ScalarWriter, self).__init__(*args, filename='scalar', **kwargs)
         self.shape = []
 
-class RadialProfileWriter(FileWriter):
+class RadialProfileWriter(HandlerWriter):
 
     def __init__(self, *args, **kwargs):
         super(RadialProfileWriter, self).__init__(*args, filename='profiles', **kwargs)
@@ -177,7 +177,7 @@ class EquatorialSliceWriter(HandlerWriter):
         scales_group.create_dataset(name='φ/1.0', data=self.basis.global_grid_azimuth(self.dealias))
         return file
 
-class SphericalShellWriter(FileWriter):
+class SphericalShellWriter(HandlerWriter):
     
     def __init__(self, *args, **kwargs):
         super(SphericalShellWriter, self).__init__(*args, filename='shell_slice', **kwargs)
@@ -206,22 +206,3 @@ class MeridionalSliceWriter(HandlerWriter):
         scales_group.create_dataset(name='r/1.0', data=self.basis.global_grid_radius(self.dealias))
         scales_group.create_dataset(name='θ/1.0', data=self.basis.global_grid_colatitude(self.dealias))
         return file
-
-class VolumeWriter(FileWriter):
-
-    def __init__(self, *args, **kwargs):
-        super(VolumeWriter, self).__init__(*args, filename='volumes', **kwargs)
-        r_shape = self.basis.global_grid_radius(self.dealias).shape
-        φ_shape = self.basis.global_grid_azimuth(self.dealias).shape
-        θ_shape = self.basis.global_grid_colatitude(self.dealias).shape
-        self.shape = [np.max((rl, φl, θl)) for rl, φl, θl in zip(r_shape, φ_shape, θ_shape)]
-
-    def create_file(self):
-        file = super(VolumeWriter, self).create_file()
-        scales_group = file['scales']
-        scales_group.create_dataset(name='r/1.0', data=self.basis.global_grid_radius(self.dealias))
-        scales_group.create_dataset(name='φ/1.0', data=self.basis.global_grid_azimuth(self.dealias))
-        scales_group.create_dataset(name='θ/1.0', data=self.basis.global_grid_colatitude(self.dealias))
-        return file
-
-
