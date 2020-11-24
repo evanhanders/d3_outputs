@@ -192,7 +192,7 @@ class SphericalShellWriter(FileWriter):
         scales_group.create_dataset(name='θ/1.0', data=self.basis.global_grid_colatitude(self.dealias))
         return file
 
-class MeridionalSliceWriter(FileWriter):
+class MeridionalSliceWriter(HandlerWriter):
     
     def __init__(self, *args, **kwargs):
         super(MeridionalSliceWriter, self).__init__(*args, filename='mer_slice', **kwargs)

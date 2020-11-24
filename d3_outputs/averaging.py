@@ -22,8 +22,18 @@ class GridSlicer:
     def __getitem__(self,index):
         return self.slices[index]
 
+class OutputTask:
+    
+    def __init__(self, field):
+        domain = field.domain
+        self.basis = domain.bases[0]
+        self.gslices = GridSlicer(field)
+        self.dist = field.dist
+        self.rank = self.dist.comm_cart.rank
+        self.dealias = domain.dealias
+        self.shape = domain.grid_shape(self.dealias)
 
-class PhiAverager:
+class PhiAverager(OutputTask):
 
     def __init__(self, field):
         """
@@ -33,14 +43,7 @@ class PhiAverager:
             field (Field object) :
                 a non-vector dedalus field.
         """
-        domain = field.domain
-        self.basis = domain.bases[0]
-        self.gslices = GridSlicer(field)
-        self.dist = field.dist
-        self.rank = self.dist.comm_cart.rank
-        self.dealias = domain.dealias
-        self.shape = domain.grid_shape(self.dealias)
-
+        super(PhiAverager, self).__init__(field)
         #Find integral weights
         self.φg        = self.basis.global_grid_azimuth(self.dealias[0])
         self.global_weight_φ = (np.ones_like(self.φg)*np.pi/((self.basis.Lmax+1)*self.dealias[0]))
@@ -55,28 +58,28 @@ class PhiAverager:
     def __call__(self, arr, comm=False, tensor=False):
         """ Takes the azimuthal average of the NumPy array arr. """
         if tensor:
-            local_piece = np.expand_dims(np.sum(self.t_weight_φ*arr, axis=1), axis=1)/self.volume_φ
-        else:
-            local_piece = np.expand_dims(np.sum(self.weight_φ*arr, axis=0), axis=0)/self.volume_φ
-        if comm:
-            if tensor:
-                self.global_tensor_profile *= 0
-                self.global_tensor_profile[:, :, self.gslices[1], self.gslices[2]] = local_piece
+            self.global_tensor_profile *= 0
+            self.global_tensor_profile[:, :, self.gslices[1], self.gslices[2]] = np.expand_dims(np.sum(self.t_weight_φ*arr, axis=1), axis=1)/self.volume_φ
+            if comm:
                 self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.global_tensor_profile, op=MPI.SUM)
                 if self.rank == 0:
                     return self.global_tensor_profile
                 else:
                     return (np.nan, np.nan, np.nan)
             else:
-                self.global_profile *= 0
-                self.global_profile[:, self.gslices[1], self.gslices[2]] = local_piece
+                return self.global_tensor_profile
+
+        else:
+            self.global_profile *= 0
+            self.global_profile[:, self.gslices[1], self.gslices[2]] = np.expand_dims(np.sum(self.weight_φ*arr, axis=0), axis=0)/self.volume_φ
+            if comm:
                 self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.global_profile, op=MPI.SUM)
                 if self.rank == 0:
                     return self.global_profile
                 else:
                     return np.nan 
-        else:
-            return local_piece
+            else:
+                return self.global_profile
 
 class PhiThetaAverager(PhiAverager):
     """
@@ -97,54 +100,38 @@ class PhiThetaAverager(PhiAverager):
         """ Takes the azimuthal and colatitude average of the NumPy array arr. """
         arr = super(PhiThetaAverager, self).__call__(arr, tensor=tensor)
         if tensor: 
+            arr = arr[:,:,self.gslices[1], self.gslices[2]]
             local_sum = np.expand_dims(np.sum(self.t_weight_θ*arr, axis=2), axis=2)/self.theta_vol
             self.global_t_profile *= 0
             self.global_t_profile[:,:,:, self.gslices[2]] = local_sum.squeeze()
             self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.global_t_profile, op=MPI.SUM)
             return self.global_t_profile
         else:
+            arr = arr[:,self.gslices[1], self.gslices[2]]
             local_sum = np.expand_dims(np.sum(self.weight_θ*arr, axis=1), axis=1)/self.theta_vol
             self.global_profile *= 0
             self.global_profile[:,:, self.gslices[2]] = local_sum.squeeze()
             self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.global_profile, op=MPI.SUM)
             return self.global_profile
 
+class BallVolumeAverager(OutputTask):
 
-class VolumeAverager:
-
-    def __init__(self, basis, dist, dummy_field, dealias=1, radius=1):
+    def __init__(self, field):
         """
         Initialize the averager.
 
         # Arguments
-            basis (BallBasis) :
-                The basis on which the sphere is being solved.
-            dist (Distributor) :
-                The Dedalus dist object for the simulation
-            dummy_field (Field) :
-                A dummy field used to figure out integral weights.
-            dealias (float, optional) :
-                Angular dealiasing factor.
-            radius (float, optional) :
-                The radius of the simulation domain
+            field (Field) :
+                A dummy field used to figure out integral weights, basis, etc.
         """
-        self.basis    = basis
-        self.Lmax     = basis.shape[1]-1
-        self.dealias  = dealias
-
-        self.weight_θ = basis.local_colatitude_weights(self.dealias)
-        self.weight_r = basis.radial_basis.local_weights(self.dealias)
-        self.reducer  = GlobalArrayReducer(dist.comm_cart)
-        self.vol_test = np.sum(self.weight_r*self.weight_θ+0*dummy_field['g'])*np.pi/(self.Lmax+1)/self.dealias
+        super(BallVolumeAverager, self).__init__(field)
+        self.weight_θ = self.basis.local_colatitude_weights(self.dealias[1])
+        self.weight_r = self.basis.radial_basis.local_weights(self.dealias[2])
+        self.reducer  = GlobalArrayReducer(self.dist.comm_cart)
+        self.vol_test = np.sum(self.weight_r*self.weight_θ+0*field['g'])*np.pi/(self.basis.Lmax+1)/self.dealias[1]
         self.vol_test = self.reducer.reduce_scalar(self.vol_test, MPI.SUM)
-        self.volume   = 4*np.pi*radius**3/3
+        self.volume   = 4*np.pi*self.basis.radial_basis.radius**3/3
         self.vol_correction = self.volume/self.vol_test
-
-        self.φavg = PhiAverager(dummy_field)
-
-        self.operations = OrderedDict()
-        self.fields     = OrderedDict()
-        self.values     = OrderedDict()
 
     def __call__(self, arr, comm=True):
         """
@@ -155,55 +142,38 @@ class VolumeAverager:
                 A 3D NumPy array on the grid.
         """
         avg = np.sum(self.vol_correction*self.weight_r*self.weight_θ*arr.real)
-        avg *= np.pi/(self.Lmax+1)/self.dealias
+        avg *= np.pi/(self.basis.Lmax+1)/self.dealias[1]
         avg /= self.volume
         if comm:
             return self.reducer.reduce_scalar(avg, MPI.SUM)
         else:
             return avg
 
-class EquatorSlicer:
+class EquatorSlicer(OutputTask):
     """
     A class which slices out an array at the equator.
     """
 
-    def __init__(self, basis, dist, dealias=1):
+    def __init__(self, field):
         """
         Initialize the slice plotter.
 
         # Arguments
-            basis (BallBasis) :
-                The basis on which the sphere is being solved.
-            dist (Distributor) :
-                The Dedalus dist object for the simulation
+            field (Field) :
+                A dummy field used to figure out integral weights, basis, etc.
         """
-        self.basis = basis
-        self.dist = dist
-        self.rank = self.dist.comm_cart.rank
-        self.dealias = dealias
-
-        self.θg    = self.basis.global_grid_colatitude(self.dealias)
-        self.θl    = self.basis.local_grid_colatitude(self.dealias)
-        self.nφ    = np.prod(self.basis.global_grid_azimuth(self.dealias).shape)
-        self.nr    = np.prod(self.basis.global_grid_radius(self.dealias).shape)
-        self.Lmax  = basis.shape[1] - 1
-        self.Nmax  = basis.shape[-1] - 1
-        θ_target   = self.θg[0,(self.Lmax+1)//2,0]
-        if np.prod(self.θl.shape) != 0:
-            self.i_θ   = np.argmin(np.abs(self.θl[0,:,0] - θ_target))
-            self.tplot             = θ_target in self.θl
+        super(EquatorSlicer, self).__init__(field)
+        θg    = self.basis.global_grid_colatitude(self.dealias[1])
+        θl    = self.basis.local_grid_colatitude(self.dealias[1])
+        θ_target   = θg[0,(self.basis.Lmax+1)//2,0]
+        if np.prod(θl.shape) != 0:
+            self.i_θ = np.argmin(np.abs(θl[0,:,0] - θ_target))
+            self.tplot = θ_target in θl
         else:
             self.i_θ = None
             self.tplot = False
 
-        rg = self.basis.global_grid_radius(self.dealias)
-        rl = basis.local_grid_radius(self.dealias)
-        self.rb = np.zeros_like(rg, dtype=bool)
-        for r in rl.flatten():
-            self.rb[r == rg] = True
-        self.rb = self.rb.flatten()
-        self.global_equator = np.zeros((self.nφ, 1, self.nr))
-
+        self.global_equator = np.zeros((self.shape[0], 1, self.shape[2]))
         self.include_data = self.dist.comm_cart.gather(self.tplot)
 
     def __call__(self, arr, comm=False):
@@ -220,10 +190,10 @@ class EquatorSlicer:
                     for s, i in zip(eq_slice, self.include_data):
                         if i: data.append(s)
                     data = np.array(data)
-                    return np.expand_dims(np.transpose(data, axes=(1,0,2)).reshape((self.nφ, self.nr)), axis=1)
+                    return np.expand_dims(np.transpose(data, axes=(1,0,2)).reshape((self.shape[0], self.shape[2])), axis=1)
                 else:
                     return np.nan
         else:
             if self.tplot:
-                self.global_equator[:,0,self.rb] = eq_slice
+                self.global_equator[:,0,self.gslices[2]] = eq_slice
             return self.global_equator
