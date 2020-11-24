@@ -6,69 +6,71 @@ from mpi4py import MPI
 from dedalus.extras.flow_tools import GlobalArrayReducer
 from dedalus.tools.parallel import Sync 
 
+class GridSlicer:
+
+    def __init__(self, field):
+        dist = field.dist
+        base_slices = dist.layouts[-1].slices(field.domain, 1)
+        self.slices = []
+       
+        for i in range(dist.dim):
+            indices    = [0]*dist.dim
+            indices[i] = slice(None)
+            slice_axis = base_slices[i][tuple(indices)]
+            self.slices.append(slice(slice_axis[0], slice_axis[-1]+1, 1))
+
+    def __getitem__(self,index):
+        return self.slices[index]
+
+
 class PhiAverager:
 
-    def __init__(self, basis, distributor, φ_ind=0, dealias=1):
+    def __init__(self, field):
         """
         Creates an object which averages over φ. Assumes that L_dealias is 1.
 
         # Arguments
-            basis (SphericalBasis3D object) :
-                The basis on which the averaging should be done.
-            φ_ind (int, optional) :
-                The index of the basis which is the azimuthal basis (0, 1, 2).
-            dealias (float, optional) :
-                Dealiasing factor for the grid
+            field (Field object) :
+                a non-vector dedalus field.
         """
-        self.distributor = distributor
-        self.rank = self.distributor.comm_cart.rank
+        domain = field.domain
+        self.basis = domain.bases[0]
+        self.gslices = GridSlicer(field)
+        self.dist = field.dist
+        self.rank = self.dist.comm_cart.rank
+        self.dealias = domain.dealias
+        self.shape = domain.grid_shape(self.dealias)
 
-        self.dealias = dealias
-        self.φ_ind     = φ_ind
-        self.basis     = basis
-        self.Lmax      = basis.shape[1]-1
-        self.φl        = basis.local_grid_azimuth(self.dealias)
-        self.φg        = basis.global_grid_azimuth(self.dealias)
-        φb = np.zeros_like(self.φg, dtype=bool)
-        for φ in self.φl.flatten():
-            φb[φ == self.φg] = 1
-        self.global_weight_φ = (np.ones_like(self.φg)*np.pi/((self.Lmax+1)*self.dealias))
-        self.weight_φ = self.global_weight_φ[φb].reshape(self.φl.shape)
+        #Find integral weights
+        self.φg        = self.basis.global_grid_azimuth(self.dealias[0])
+        self.global_weight_φ = (np.ones_like(self.φg)*np.pi/((self.basis.Lmax+1)*self.dealias[0]))
+        self.weight_φ = self.global_weight_φ[self.gslices[0],:,:].reshape((self.shape[0], 1, 1))
+        self.t_weight_φ = np.expand_dims(self.weight_φ, axis=0)
         self.volume_φ = np.sum(self.global_weight_φ)
 
-        rg = basis.global_grid_radius(self.dealias)
-        θg = basis.global_grid_colatitude(self.dealias)
-        rb = np.zeros_like(rg, dtype=bool)
-        θb = np.zeros_like(θg, dtype=bool)
-        for r in basis.local_grid_radius(self.dealias).flatten():
-            rb[r == rg] = True
-        for θ in basis.local_grid_colatitude(self.dealias).flatten():
-            θb[θ == θg] = True
-        self.global_bool = rb*θb
-        self.local_profile  = np.zeros_like(rg*θg)
-        self.global_profile = np.zeros_like(rg*θg)
-        self.local_tensor_profile  = np.zeros([3, *tuple(self.global_profile.shape)])
-        self.global_tensor_profile = np.zeros([3, *tuple(self.global_profile.shape)])
+        #Set up memory space
+        self.global_profile = np.zeros((1, *tuple(self.shape[1:])))
+        self.global_tensor_profile = np.zeros([3, 1, *tuple(self.shape[1:])])
 
     def __call__(self, arr, comm=False, tensor=False):
         """ Takes the azimuthal average of the NumPy array arr. """
         if tensor:
-            local_piece = np.expand_dims(np.sum(np.expand_dims(self.weight_φ, axis=0)*arr, axis=self.φ_ind+1), axis=self.φ_ind+1)/self.volume_φ
+            local_piece = np.expand_dims(np.sum(self.t_weight_φ*arr, axis=1), axis=1)/self.volume_φ
         else:
-            local_piece = np.expand_dims(np.sum(self.weight_φ*arr, axis=self.φ_ind), axis=self.φ_ind)/self.volume_φ
+            local_piece = np.expand_dims(np.sum(self.weight_φ*arr, axis=0), axis=0)/self.volume_φ
         if comm:
             if tensor:
-                self.local_tensor_profile *= 0
-                self.local_tensor_profile[self.global_bool*np.ones((3,1,1,1), dtype=bool)] = local_piece.flatten()
-                self.distributor.comm_cart.Allreduce(self.local_tensor_profile, self.global_tensor_profile, op=MPI.SUM)
+                self.global_tensor_profile *= 0
+                self.global_tensor_profile[:, :, self.gslices[1], self.gslices[2]] = local_piece
+                self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.global_tensor_profile, op=MPI.SUM)
                 if self.rank == 0:
                     return self.global_tensor_profile
                 else:
                     return (np.nan, np.nan, np.nan)
             else:
-                self.local_profile *= 0
-                self.local_profile[self.global_bool] = local_piece.flatten()
-                self.distributor.comm_cart.Allreduce(self.local_profile, self.global_profile, op=MPI.SUM)
+                self.global_profile *= 0
+                self.global_profile[:, self.gslices[1], self.gslices[2]] = local_piece
+                self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.global_profile, op=MPI.SUM)
                 if self.rank == 0:
                     return self.global_profile
                 else:
@@ -80,54 +82,45 @@ class PhiThetaAverager(PhiAverager):
     """
     Creates radial profiles that have been averaged over azimuth and colatitude.
     """
-    def __init__(self, basis, distributor, θ_ind=1, φ_ind=0, dealias=1):
-        super(PhiThetaAverager, self).__init__(basis, distributor, φ_ind=φ_ind, dealias=dealias)
-        self.weight_θ = basis.local_colatitude_weights(self.dealias)
-        self.global_weight_θ = basis.global_colatitude_weights(self.dealias)
-        self.θ_ind    = θ_ind
-        self.distributor = distributor
+    def __init__(self, field):
+        super(PhiThetaAverager, self).__init__(field)
+        self.weight_θ = self.basis.local_colatitude_weights(self.dealias[1])
+        self.t_weight_θ = np.expand_dims(self.basis.local_colatitude_weights(self.dealias[1]), axis=0)
 
-        rl = basis.local_grid_radius(self.dealias)
-        rg = basis.global_grid_radius(self.dealias)
-        θg = basis.global_grid_colatitude(self.dealias)
-        self.rb = np.zeros_like(rg, dtype=bool)
-        for r in rl.flatten():
-            self.rb[r == rg] = True
-        self.local_profile = np.zeros_like(rg)
-        self.global_profile = np.zeros_like(rg)
-        self.local_t_profile  = np.zeros((3, *tuple(rg.shape)))
-        self.global_t_profile = np.zeros((3, *tuple(rg.shape)))
+        global_weight_θ = self.basis.global_colatitude_weights(self.dealias[1])
+        self.theta_vol = np.sum(global_weight_θ)
 
-        self.theta_vol = np.sum(self.global_weight_θ)
+        self.global_profile = np.zeros((1, 1, self.shape[2]))
+        self.global_t_profile = np.zeros((3, 1, 1, self.shape[2]))
         
     def __call__(self, arr, tensor=False):
         """ Takes the azimuthal and colatitude average of the NumPy array arr. """
         arr = super(PhiThetaAverager, self).__call__(arr, tensor=tensor)
         if tensor: 
-            local_sum = np.expand_dims(np.sum(np.expand_dims(self.weight_θ, axis=0)*arr, axis=self.θ_ind+1), axis=self.θ_ind+1)/self.theta_vol
-            self.local_t_profile *= 0
-            self.local_t_profile[:, self.rb] = local_sum.squeeze()
-            self.distributor.comm_cart.Allreduce(self.local_t_profile, self.global_t_profile, op=MPI.SUM)
+            local_sum = np.expand_dims(np.sum(self.t_weight_θ*arr, axis=2), axis=2)/self.theta_vol
+            self.global_t_profile *= 0
+            self.global_t_profile[:,:,:, self.gslices[2]] = local_sum.squeeze()
+            self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.global_t_profile, op=MPI.SUM)
             return self.global_t_profile
         else:
-            local_sum = np.expand_dims(np.sum(self.weight_θ*arr, axis=self.θ_ind), axis=self.θ_ind)/self.theta_vol
-            self.local_profile *= 0
-            self.local_profile[self.rb] = local_sum.squeeze()
-            self.distributor.comm_cart.Allreduce(self.local_profile, self.global_profile, op=MPI.SUM)
+            local_sum = np.expand_dims(np.sum(self.weight_θ*arr, axis=1), axis=1)/self.theta_vol
+            self.global_profile *= 0
+            self.global_profile[:,:, self.gslices[2]] = local_sum.squeeze()
+            self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.global_profile, op=MPI.SUM)
             return self.global_profile
 
 
 class VolumeAverager:
 
-    def __init__(self, basis, distributor, dummy_field, dealias=1, radius=1):
+    def __init__(self, basis, dist, dummy_field, dealias=1, radius=1):
         """
         Initialize the averager.
 
         # Arguments
             basis (BallBasis) :
                 The basis on which the sphere is being solved.
-            distributor (Distributor) :
-                The Dedalus distributor object for the simulation
+            dist (Distributor) :
+                The Dedalus dist object for the simulation
             dummy_field (Field) :
                 A dummy field used to figure out integral weights.
             dealias (float, optional) :
@@ -141,13 +134,13 @@ class VolumeAverager:
 
         self.weight_θ = basis.local_colatitude_weights(self.dealias)
         self.weight_r = basis.radial_basis.local_weights(self.dealias)
-        self.reducer  = GlobalArrayReducer(distributor.comm_cart)
+        self.reducer  = GlobalArrayReducer(dist.comm_cart)
         self.vol_test = np.sum(self.weight_r*self.weight_θ+0*dummy_field['g'])*np.pi/(self.Lmax+1)/self.dealias
         self.vol_test = self.reducer.reduce_scalar(self.vol_test, MPI.SUM)
         self.volume   = 4*np.pi*radius**3/3
         self.vol_correction = self.volume/self.vol_test
 
-        self.φavg = PhiAverager(self.basis, distributor)
+        self.φavg = PhiAverager(dummy_field)
 
         self.operations = OrderedDict()
         self.fields     = OrderedDict()
@@ -174,19 +167,19 @@ class EquatorSlicer:
     A class which slices out an array at the equator.
     """
 
-    def __init__(self, basis, distributor, dealias=1):
+    def __init__(self, basis, dist, dealias=1):
         """
         Initialize the slice plotter.
 
         # Arguments
             basis (BallBasis) :
                 The basis on which the sphere is being solved.
-            distributor (Distributor) :
-                The Dedalus distributor object for the simulation
+            dist (Distributor) :
+                The Dedalus dist object for the simulation
         """
         self.basis = basis
-        self.distributor = distributor
-        self.rank = self.distributor.comm_cart.rank
+        self.dist = dist
+        self.rank = self.dist.comm_cart.rank
         self.dealias = dealias
 
         self.θg    = self.basis.global_grid_colatitude(self.dealias)
@@ -211,7 +204,7 @@ class EquatorSlicer:
         self.rb = self.rb.flatten()
         self.global_equator = np.zeros((self.nφ, 1, self.nr))
 
-        self.include_data = self.distributor.comm_cart.gather(self.tplot)
+        self.include_data = self.dist.comm_cart.gather(self.tplot)
 
     def __call__(self, arr, comm=False):
         """ Communicate local plot data globally """
@@ -220,7 +213,7 @@ class EquatorSlicer:
         else:
             eq_slice = arr[:,self.i_θ,:].real 
         if comm:
-            eq_slice = self.distributor.comm_cart.gather(eq_slice, root=0)
+            eq_slice = self.dist.comm_cart.gather(eq_slice, root=0)
             with Sync():
                 data = []
                 if self.rank == 0:
