@@ -7,30 +7,30 @@ from mpi4py import MPI
 
 from dedalus.tools.parallel import Sync 
 
-class FileWriter:
+class HandlerWriter:
 
-    def __init__(self, basis, distributor, root_dir, filename='scalar', write_dt=1, write_iter=np.inf, max_writes=np.inf, dealias=1):
+    def __init__(self, handler, operation, root_dir, filename, max_writes=np.inf):
         """ 
         An abstract class for writing to .h5 files, inspired by classic dedalus file handlers
 
         # Arguments
-            basis (BallBasis) :
-                The 3D spherical basis on which the problem is being solved.
-            distributor (Distributor) :
-                The Dedalus distributor object for the simulation
+            handler (DictHandler) :
+                A dictionary handle full of tasks to output
+            operation (OutputTask) :
+                An output task to apply to each field in handler before output
             root_dir (string) :
                 The directory in which the folder filename/ will be created, for placement of this file.
-            filename (string, optional) :
+            filename (string) :
                 The name of the file and folder to be output.
-            write_dt (float, optional) :
-               The amount of simulation time to wait between outputs.
-            write_iter (int, optional) :
-               The amount of simulation iterations to wait between outputs.
             max_writes (int, optional) :
                 The maximum number of writes allowed per file.
         """
-        self.basis = basis
-        self.comm  = distributor.comm_cart
+        self.handler = handler
+        self.operation = operation
+        self.basis = self.operation.basis
+        self.comm  = self.operation.dist.comm_cart
+        self.shape = None
+        self.buff  = None
         self.base_path  = pathlib.Path('{:s}/{:s}/'.format(root_dir, filename))
         self.filename   = filename
         if not self.base_path.exists():
@@ -38,14 +38,12 @@ class FileWriter:
                 if self.comm.rank == 0:
                     self.base_path.mkdir()
         self.current_file_name = None
-        self.dealias = dealias
-        self.shape = None
+
+        self.last_sim_div  = self.handler.last_sim_div
+        self.last_wall_div = self.handler.last_wall_div
+        self.last_iter_div = self.handler.last_iter_div
 
         self.tasks      = OrderedDict()
-        self.write_dt   = write_dt
-        self.write_iter = write_iter
-        self.last_time  = -write_dt
-        self.last_iter  = -1
         self.writes     = 0
         self.max_writes = max_writes
 
@@ -63,6 +61,9 @@ class FileWriter:
         scale_group.create_dataset(name='sim_time',     shape=(0,), maxshape=(None,), dtype=np.float64)
         scale_group.create_dataset(name='write_number', shape=(0,), maxshape=(None,), dtype=np.float64)
         scale_group.create_dataset(name='iteration', shape=(0,), maxshape=(None,), dtype=np.float64)
+        for i,k in enumerate(self.basis.coords.coords):
+            grid=self.basis.global_grids()[i]
+            scale_group.create_dataset(name='{}/1.0'.format(k), data=grid)
  
         task_group = file.create_group('tasks')
         for nm in self.tasks.keys():
@@ -71,8 +72,6 @@ class FileWriter:
             task_group.create_dataset(name=nm, shape=shape, maxshape=maxshape, dtype=np.float64)
 
         return file
-
-
 
     def _write_base_scales(self, solver, file):
         """ Writes some basic scalar information to file. """
@@ -85,13 +84,17 @@ class FileWriter:
         return file
 
     def pre_write_evaluations(self):
-        """ 
-        A function which is called before evaluate_tasks().
+        if self.shape is None:
+            self.shape = self.operation(self.handler.fields[self.handler.tasks[0]['name']]['g'], comm=False).shape
+            self.buff = np.zeros((len(self.handler.tasks), *tuple(self.shape)))
 
-        This can be used to ensure that a field is evaluated ONLY when a write to file is about to occur.
-        """
-        pass
-       
+        for i, task in enumerate(self.handler.tasks):
+            self.buff[i] = self.operation(self.handler.fields[task['name']]['g'], comm=False)
+
+        self.comm.Allreduce(MPI.IN_PLACE, self.buff, op=MPI.SUM)
+        for i, task in enumerate(self.handler.tasks):
+            self.tasks[task['name']] = self.buff[i]
+      
     def process(self, solver):
         """
         Checks to see if data needs to be written to file. If so, writes it.
@@ -100,8 +103,13 @@ class FileWriter:
             solver (Dedalus Solver):
                 The solver object for the Dedalus IVP
         """
-        if solver.sim_time - self.last_time > self.write_dt or solver.iteration - self.last_iter > self.write_iter:
-            self.last_time = solver.sim_time
+        no_write =  (self.last_sim_div  == self.handler.last_sim_div)\
+                   *(self.last_wall_div == self.handler.last_wall_div)\
+                   *(self.last_iter_div == self.handler.last_iter_div)
+        if not no_write:
+            self.last_sim_div  = self.handler.last_sim_div
+            self.last_wall_div = self.handler.last_wall_div
+            self.last_iter_div = self.handler.last_iter_div
             self.pre_write_evaluations()
             self.evaluate_tasks()
             with Sync(self.comm):
@@ -112,97 +120,7 @@ class FileWriter:
                         file = h5py.File(self.current_file_name, 'a')
                     self.writes += 1
                     file = self._write_base_scales(solver, file)
-
                     for k, task in self.tasks.items():
                         file['tasks/{}'.format(k)].resize((self.writes-1) % self.max_writes + 1, axis=0)
                         file['tasks/{}'.format(k)][-1] = task
                     file.close()
-
-class HandlerWriter(FileWriter):
-
-    def __init__(self, *args, **kwargs):
-        super(HandlerWriter, self).__init__(*args, **kwargs)
-        self.handler  = None
-        self.averager = None
-
-        self.buff  = None
-
-    def add_handler(self, dict_handler):
-        self.handler = dict_handler
-        self.buff = np.zeros((len(self.handler.tasks), *tuple(self.shape)))
-
-    def add_averager(self, averager):
-        self.averager = averager
-        
-    def pre_write_evaluations(self):
-        for i, task in enumerate(self.handler.tasks):
-#            self.buff[i] = self.averager(self.handler.fields[task['name']]['g'], comm=True)
-#            self.tasks[task['name']] = self.buff[i]
-            self.buff[i] = self.averager(self.handler.fields[task['name']]['g'], comm=False)
-
-        self.comm.Allreduce(MPI.IN_PLACE, self.buff, op=MPI.SUM)
-        for i, task in enumerate(self.handler.tasks):
-            self.tasks[task['name']] = self.buff[i]
-
-class ScalarWriter(HandlerWriter):
-
-    def __init__(self, *args, **kwargs):
-        super(ScalarWriter, self).__init__(*args, filename='scalar', **kwargs)
-        self.shape = []
-
-class RadialProfileWriter(HandlerWriter):
-
-    def __init__(self, *args, **kwargs):
-        super(RadialProfileWriter, self).__init__(*args, filename='profiles', **kwargs)
-        self.shape = self.basis.global_grid_radius(self.dealias).shape
-
-    def create_file(self):
-        file = super(RadialProfileWriter, self).create_file()
-        scales_group = file['scales']
-        scales_group.create_dataset(name='r/1.0', data=self.basis.global_grid_radius(self.dealias))
-        return file
-
-class EquatorialSliceWriter(HandlerWriter):
-    
-    def __init__(self, *args, **kwargs):
-        super(EquatorialSliceWriter, self).__init__(*args, filename='eq_slice', **kwargs)
-        r_shape = self.basis.global_grid_radius(self.dealias).shape
-        φ_shape = self.basis.global_grid_azimuth(self.dealias).shape
-        self.shape = [np.max((rl, φl)) for rl, φl in zip(r_shape, φ_shape)]
-
-    def create_file(self):
-        file = super(EquatorialSliceWriter, self).create_file()
-        scales_group = file['scales']
-        scales_group.create_dataset(name='r/1.0', data=self.basis.global_grid_radius(self.dealias))
-        scales_group.create_dataset(name='φ/1.0', data=self.basis.global_grid_azimuth(self.dealias))
-        return file
-
-class SphericalShellWriter(HandlerWriter):
-    
-    def __init__(self, *args, **kwargs):
-        super(SphericalShellWriter, self).__init__(*args, filename='shell_slice', **kwargs)
-        φ_shape = self.basis.global_grid_azimuth(self.dealias).shape
-        θ_shape = self.basis.global_grid_colatitude(self.dealias).shape
-        self.shape = [np.max((φl, θl)) for φl, θl in zip(φ_shape, θ_shape)]
-
-    def create_file(self):
-        file = super(SphericalShellWriter, self).create_file()
-        scales_group = file['scales']
-        scales_group.create_dataset(name='φ/1.0', data=self.basis.global_grid_azimuth(self.dealias))
-        scales_group.create_dataset(name='θ/1.0', data=self.basis.global_grid_colatitude(self.dealias))
-        return file
-
-class MeridionalSliceWriter(HandlerWriter):
-    
-    def __init__(self, *args, **kwargs):
-        super(MeridionalSliceWriter, self).__init__(*args, filename='mer_slice', **kwargs)
-        r_shape = self.basis.global_grid_radius(self.dealias).shape
-        θ_shape = self.basis.global_grid_colatitude(self.dealias).shape
-        self.shape = [np.max((rl, θl)) for rl, θl in zip(r_shape, θ_shape)]
-
-    def create_file(self):
-        file = super(MeridionalSliceWriter, self).create_file()
-        scales_group = file['scales']
-        scales_group.create_dataset(name='r/1.0', data=self.basis.global_grid_radius(self.dealias))
-        scales_group.create_dataset(name='θ/1.0', data=self.basis.global_grid_colatitude(self.dealias))
-        return file
