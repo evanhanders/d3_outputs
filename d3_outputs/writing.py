@@ -58,9 +58,9 @@ class HandlerWriter:
  
         # Scale group
         scale_group = file.create_group('scales')
-        scale_group.create_dataset(name='sim_time',     shape=(0,), maxshape=(None,), dtype=np.float64)
-        scale_group.create_dataset(name='write_number', shape=(0,), maxshape=(None,), dtype=np.float64)
-        scale_group.create_dataset(name='iteration', shape=(0,), maxshape=(None,), dtype=np.float64)
+        for k in ['sim_time', 'iteration', 'write_number', 'timestep']:
+            scale_group.create_dataset(name=k,     shape=(0,), maxshape=(None,), dtype=np.float64)
+
         for i,k in enumerate(self.basis.coords.coords):
             grid=self.basis.global_grids()[i]
             scale_group.create_dataset(name='{}/1.0'.format(k), data=grid)
@@ -73,14 +73,14 @@ class HandlerWriter:
 
         return file
 
-    def _write_base_scales(self, solver, file):
+    def _write_base_scales(self, solver, dt, file):
         """ Writes some basic scalar information to file. """
-        file['scales/sim_time'].resize((self.writes-1) % self.max_writes + 1, axis=0)
+        for k in ['sim_time', 'iteration', 'write_number', 'timestep']:
+            file['scales/{}'.format(k)].resize((self.writes-1) % self.max_writes + 1, axis=0)
         file['scales/sim_time'][-1] = solver.sim_time
-        file['scales/iteration'].resize((self.writes-1) % self.max_writes + 1, axis=0)
         file['scales/iteration'][-1] = solver.iteration
-        file['scales/write_number'].resize((self.writes-1) % self.max_writes + 1, axis=0)
         file['scales/write_number'][-1] = self.writes
+        file['scales/timestep'][-1] = dt
         return file
 
     def pre_write_evaluations(self):
@@ -95,7 +95,7 @@ class HandlerWriter:
         for i, task in enumerate(self.handler.tasks):
             self.tasks[task['name']] = self.buff[i]
       
-    def process(self, solver):
+    def process(self, solver, dt):
         """
         Checks to see if data needs to be written to file. If so, writes it.
 
@@ -119,8 +119,28 @@ class HandlerWriter:
                     else:
                         file = h5py.File(self.current_file_name, 'a')
                     self.writes += 1
-                    file = self._write_base_scales(solver, file)
+                    file = self._write_base_scales(solver, dt, file)
                     for k, task in self.tasks.items():
                         file['tasks/{}'.format(k)].resize((self.writes-1) % self.max_writes + 1, axis=0)
                         file['tasks/{}'.format(k)][-1] = task
                     file.close()
+
+class BallShellHandlerWriter(HandlerWriter):
+
+    def pre_write_evaluations(self):
+        if self.shape is None:
+            self.base_tasks = []
+            for i, task in enumerate(self.handler.tasks):
+                if '_shell' in task['name']: continue
+                if '_ball' in task['name']:
+                    self.base_tasks.append(task['name'].split('_ball')[0])
+            self.shape = self.operation(self.handler.fields[self.base_tasks[0]+'_ball']['g'], self.handler.fields[self.base_tasks[0]+'_shell']['g'], comm=False).shape
+            self.buff = np.zeros((len(self.base_tasks), *tuple(self.shape)))
+
+        for i, task in enumerate(self.base_tasks):
+            self.buff[i] = self.operation(self.handler.fields[task+'_ball']['g'], self.handler.fields[task+'_shell']['g'], comm=False)
+
+        self.comm.Allreduce(MPI.IN_PLACE, self.buff, op=MPI.SUM)
+        for i, task in enumerate(self.base_tasks):
+            self.tasks[task] = self.buff[i]
+

@@ -55,7 +55,7 @@ class PhiAverager(OutputTask):
         self.global_profile = np.zeros((1, *tuple(self.shape[1:])))
         self.global_tensor_profile = np.zeros([3, 1, *tuple(self.shape[1:])])
 
-    def __call__(self, arr, comm=False, tensor=False):
+    def __call__(self, arr, comm=True, tensor=False):
         """ Takes the azimuthal average of the NumPy array arr. """
         if tensor:
             self.global_tensor_profile *= 0
@@ -96,7 +96,7 @@ class PhiThetaAverager(PhiAverager):
         self.pt_global_profile = np.zeros((1, 1, self.shape[2]))
         self.pt_global_t_profile = np.zeros((3, 1, 1, self.shape[2]))
         
-    def __call__(self, arr, tensor=False, comm=False):
+    def __call__(self, arr, tensor=False, comm=True):
         """ Takes the azimuthal and colatitude average of the NumPy array arr. """
         arr = super(PhiThetaAverager, self).__call__(arr, tensor=tensor, comm=comm)
         if tensor: 
@@ -149,6 +149,60 @@ class BallVolumeAverager(OutputTask):
         else:
             return avg
 
+class BallShellVolumeAverager(OutputTask):
+
+    def __init__(self, ball_field, shell_field):
+        """
+        Initialize the averager.
+
+        # Arguments
+            ball_field (Field) :
+                A field used to figure out integral weights, etc, in the ball.
+            shell_field (Field) :
+                A field used to figure out integral weights, etc, in the shell.
+        """
+        super(BallShellVolumeAverager, self).__init__(ball_field)
+        shell_info    = OutputTask(shell_field)
+        self.Lmax     = self.basis.Lmax
+        self.reducer  = GlobalArrayReducer(self.dist.comm_cart)
+
+        self.ball_volume  = 4*np.pi*self.basis.radial_basis.radius**3/3
+        self.shell_volume = 4*np.pi*shell_info.basis.radial_basis.radii[1]**3/3 - self.ball_volume
+        self.volume       = self.ball_volume + self.shell_volume
+
+        self.ball_weight_θ  = self.basis.local_colatitude_weights(self.dealias[1])
+        self.ball_weight_r  = self.basis.radial_basis.local_weights(self.dealias[2])
+        self.ball_vol_test = np.sum(self.ball_weight_r*self.ball_weight_θ+0*ball_field['g'])*np.pi/(self.Lmax+1)/self.dealias[1]
+        self.ball_vol_test = self.reducer.reduce_scalar(self.ball_vol_test, MPI.SUM)
+        self.ball_vol_correction = self.ball_volume/self.ball_vol_test
+
+        φS, θS, rS = shell_info.basis.local_grids(shell_info.dealias)
+        self.shell_weight_θ = shell_info.basis.local_colatitude_weights(shell_info.dealias[1])
+        self.shell_weight_r = shell_info.basis.radial_basis.local_weights(shell_info.dealias[2])*rS**2
+        self.shell_vol_test = np.sum(self.shell_weight_r*self.shell_weight_θ+0*shell_field['g'])*np.pi/(self.Lmax+1)/shell_info.dealias[1]
+        self.shell_vol_test = self.reducer.reduce_scalar(self.shell_vol_test, MPI.SUM)
+        self.shell_vol_correction = self.shell_volume/self.shell_vol_test
+
+    def __call__(self, ball_arr, shell_arr, comm=True):
+        """
+        Performs a volume average over the given field
+
+        # Arguments
+            ball_arr (NumPy array) :
+                A 3D NumPy array on the ball.
+            shell_arr (NumPy array) :
+                A 3D NumPy array on the shell.
+        """
+        ball_avg  = np.sum(self.ball_vol_correction*self.ball_weight_r*self.ball_weight_θ*ball_arr.real)
+        shell_avg = np.sum(self.shell_vol_correction*self.shell_weight_r*self.shell_weight_θ*shell_arr.real)
+        avg = (ball_avg + shell_avg)*(np.pi/(self.Lmax+1)/self.dealias[1])
+        avg /= self.volume
+        if comm:
+            return self.reducer.reduce_scalar(avg, MPI.SUM)
+        else:
+            return avg
+
+
 class EquatorSlicer(OutputTask):
     """
     A class which slices out an array at the equator.
@@ -160,7 +214,7 @@ class EquatorSlicer(OutputTask):
 
         # Arguments
             field (Field) :
-                A dummy field used to figure out integral weights, basis, etc.
+                A field used to figure out integral weights, basis, etc.
         """
         super(EquatorSlicer, self).__init__(field)
         θg    = self.basis.global_grid_colatitude(self.dealias[1])
@@ -176,7 +230,7 @@ class EquatorSlicer(OutputTask):
         self.global_equator = np.zeros((self.shape[0], 1, self.shape[2]))
         self.include_data = self.dist.comm_cart.gather(self.tplot)
 
-    def __call__(self, arr, comm=False):
+    def __call__(self, arr, comm=True):
         """ Communicate local plot data globally """
         if self.i_θ is None:
             eq_slice = np.zeros_like(arr)
@@ -211,7 +265,7 @@ class SphericalShellCommunicator(OutputTask):
         super(SphericalShellCommunicator, self).__init__(field)
         self.buff = np.zeros((self.shape[0], self.shape[1], 1))
 
-    def __call__(self, arr, comm=False):
+    def __call__(self, arr, comm=True):
         self.buff *= 0
         if np.prod(arr.shape) > 0:
             self.buff[self.gslices[0], self.gslices[1], :] = arr
