@@ -69,6 +69,7 @@ ez['g'][2] =  np.cos(theta)
 div = lambda A: operators.Divergence(A, index=0)
 lap = lambda A: operators.Laplacian(A, c)
 grad = lambda A: operators.Gradient(A, c)
+curl = lambda A: operators.Curl(A)
 dot = lambda A, B: arithmetic.DotProduct(A, B)
 cross = lambda A, B: arithmetic.CrossProduct(A, B)
 ddt = lambda A: operators.TimeDerivative(A)
@@ -95,15 +96,33 @@ solver = solvers.InitialValueSolver(problem, ts)
 solver.stop_sim_time = t_end
 
 # Analysis
-from d3_outputs.averaging    import BallVolumeAverager
+from d3_outputs.averaging    import BallVolumeAverager, PhiAverager, PhiThetaAverager, EquatorSlicer, SphericalShellCommunicator
 from d3_outputs.writing      import HandlerWriter
 output_dir = './'
 scalars = solver.evaluator.add_dictionary_handler(iter=10)
 scalars.add_task(0.5*dot(u, u), name='KE', layout='g')
 
+visuals = solver.evaluator.add_dictionary_handler(sim_dt=0.05)
+visuals.add_task(T, name='T', layout='g')
+visuals.add_task(dot(ez, curl(u)), name='z_vort', layout='g')
+
+shells = solver.evaluator.add_dictionary_handler(sim_dt=0.05)
+shells.add_task(T(r=0.95), name='T_r0.95', layout='g')
+shells.add_task(dot(ez, curl(u))(r=0.95), name='z_vort_r0.95', layout='g')
+
 vol_averager       = BallVolumeAverager(p)
-scalarWriter  = HandlerWriter(scalars, vol_averager,        output_dir, 'scalar', max_writes=np.inf)  
-writers = [scalarWriter,]
+azimuthal_averager = PhiAverager(p)
+radialProfile_averager = PhiThetaAverager(p)
+eq_slicer = EquatorSlicer(p)
+shell_comm = SphericalShellCommunicator(p)
+
+scalarWriter  = HandlerWriter(scalars, vol_averager, output_dir, 'scalar', max_writes=np.inf)  
+esliceWriter  = HandlerWriter(visuals, eq_slicer, output_dir, 'eq_slice', max_writes=40)  
+msliceWriter  = HandlerWriter(visuals, azimuthal_averager, output_dir, 'mer_slice', max_writes=40)  
+profileWriter  = HandlerWriter(visuals, radialProfile_averager, output_dir, 'profiles', max_writes=40)  
+sshellWriter  = HandlerWriter(shells, shell_comm, output_dir, 'shell_slice', max_writes=40)  
+
+writers = [scalarWriter, esliceWriter, msliceWriter, profileWriter, sshellWriter]
 
 # Main loop
 start_time = time.time()
