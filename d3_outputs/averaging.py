@@ -149,7 +149,44 @@ class BallVolumeAverager(OutputTask):
         else:
             return avg
 
-class BallShellVolumeAverager(OutputTask):
+class ShellVolumeAverager(OutputTask):
+
+    def __init__(self, field):
+        """
+        Initialize the averager.
+
+        # Arguments
+            field (Field) :
+                A dummy field used to figure out integral weights, basis, etc.
+        """
+        super(ShellVolumeAverager, self).__init__(field)
+        self.r = self.basis.radial_basis.local_grid(self.dealias[2])
+        self.weight_θ = self.basis.local_colatitude_weights(self.dealias[1])
+        self.weight_r = self.basis.radial_basis.local_weights(self.dealias[2])*self.r**2
+        self.reducer  = GlobalArrayReducer(self.dist.comm_cart)
+        self.vol_test = np.sum(self.weight_r*self.weight_θ+0*field['g'])*np.pi/(self.basis.Lmax+1)/self.dealias[1]
+        self.vol_test = self.reducer.reduce_scalar(self.vol_test, MPI.SUM)
+        self.volume   = 4*np.pi*(self.basis.radial_basis.radii[1]**3 - self.basis.radial_basis.radii[0]**3)/3
+        self.vol_correction = self.volume/self.vol_test
+
+    def __call__(self, arr, comm=True):
+        """
+        Performs a volume average over the given field
+
+        # Arguments
+            arr (NumPy array) :
+                A 3D NumPy array on the grid.
+        """
+        avg = np.sum(self.vol_correction*self.weight_r*self.weight_θ*arr.real)
+        avg *= np.pi/(self.basis.Lmax+1)/self.dealias[1]
+        avg /= self.volume
+        if comm:
+            return self.reducer.reduce_scalar(avg, MPI.SUM)
+        else:
+            return avg
+
+
+class BallShellVolumeAverager:
 
     def __init__(self, ball_field, shell_field):
         """
@@ -161,27 +198,9 @@ class BallShellVolumeAverager(OutputTask):
             shell_field (Field) :
                 A field used to figure out integral weights, etc, in the shell.
         """
-        super(BallShellVolumeAverager, self).__init__(ball_field)
-        shell_info    = OutputTask(shell_field)
-        self.Lmax     = self.basis.Lmax
-        self.reducer  = GlobalArrayReducer(self.dist.comm_cart)
-
-        self.ball_volume  = 4*np.pi*self.basis.radial_basis.radius**3/3
-        self.shell_volume = 4*np.pi*shell_info.basis.radial_basis.radii[1]**3/3 - self.ball_volume
-        self.volume       = self.ball_volume + self.shell_volume
-
-        self.ball_weight_θ  = self.basis.local_colatitude_weights(self.dealias[1])
-        self.ball_weight_r  = self.basis.radial_basis.local_weights(self.dealias[2])
-        self.ball_vol_test = np.sum(self.ball_weight_r*self.ball_weight_θ+0*ball_field['g'])*np.pi/(self.Lmax+1)/self.dealias[1]
-        self.ball_vol_test = self.reducer.reduce_scalar(self.ball_vol_test, MPI.SUM)
-        self.ball_vol_correction = self.ball_volume/self.ball_vol_test
-
-        φS, θS, rS = shell_info.basis.local_grids(shell_info.dealias)
-        self.shell_weight_θ = shell_info.basis.local_colatitude_weights(shell_info.dealias[1])
-        self.shell_weight_r = shell_info.basis.radial_basis.local_weights(shell_info.dealias[2])*rS**2
-        self.shell_vol_test = np.sum(self.shell_weight_r*self.shell_weight_θ+0*shell_field['g'])*np.pi/(self.Lmax+1)/shell_info.dealias[1]
-        self.shell_vol_test = self.reducer.reduce_scalar(self.shell_vol_test, MPI.SUM)
-        self.shell_vol_correction = self.shell_volume/self.shell_vol_test
+        self.ball_averager = BallVolumeAverager(ball_field)
+        self.shell_averager = ShellVolumeAverager(shell_field)
+        self.volume = self.ball_averager.volume + self.shell_averager.volume
 
     def __call__(self, ball_arr, shell_arr, comm=True):
         """
@@ -193,14 +212,10 @@ class BallShellVolumeAverager(OutputTask):
             shell_arr (NumPy array) :
                 A 3D NumPy array on the shell.
         """
-        ball_avg  = np.sum(self.ball_vol_correction*self.ball_weight_r*self.ball_weight_θ*ball_arr.real)
-        shell_avg = np.sum(self.shell_vol_correction*self.shell_weight_r*self.shell_weight_θ*shell_arr.real)
-        avg = (ball_avg + shell_avg)*(np.pi/(self.Lmax+1)/self.dealias[1])
-        avg /= self.volume
-        if comm:
-            return self.reducer.reduce_scalar(avg, MPI.SUM)
-        else:
-            return avg
+        ball_avg  = self.ball_averager(ball_arr, comm=comm)
+        shell_avg = self.shell_averager(shell_arr, comm=comm)
+        avg = (ball_avg*self.ball_averager.volume + shell_avg*self.shell_averager.volume)/self.volume
+        return avg
 
 
 class EquatorSlicer(OutputTask):
