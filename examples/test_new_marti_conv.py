@@ -97,39 +97,32 @@ solver.stop_sim_time = t_end
 
 # Analysis
 from d3_outputs.averaging    import BallVolumeAverager, PhiAverager, PhiThetaAverager, EquatorSlicer, SphericalShellCommunicator
-from d3_outputs.writing      import HandlerWriter
+from d3_outputs.writing      import d3FileHandler 
 output_dir = './'
-scalars = solver.evaluator.add_dictionary_handler(iter=10)
-scalars.add_task(0.5*dot(u, u), name='KE', layout='g')
-
-visuals = solver.evaluator.add_dictionary_handler(sim_dt=0.05)
-visuals.add_task(T, name='T', layout='g')
-visuals.add_task(dot(ez, curl(u)), name='z_vort', layout='g')
-
-shells = solver.evaluator.add_dictionary_handler(sim_dt=0.05)
-shells.add_task(T(r=0.95), name='T_r0.95', layout='g')
-shells.add_task(dot(ez, curl(u))(r=0.95), name='z_vort_r0.95', layout='g')
-
 vol_averager       = BallVolumeAverager(p)
 azimuthal_averager = PhiAverager(p)
 radialProfile_averager = PhiThetaAverager(p)
 eq_slicer = EquatorSlicer(p)
 shell_comm = SphericalShellCommunicator(p)
 
-scalarWriter  = HandlerWriter(scalars, vol_averager, output_dir, 'scalar', max_writes=np.inf)  
-esliceWriter  = HandlerWriter(visuals, eq_slicer, output_dir, 'eq_slice', max_writes=40)  
-msliceWriter  = HandlerWriter(visuals, azimuthal_averager, output_dir, 'mer_slice', max_writes=40)  
-profileWriter  = HandlerWriter(visuals, radialProfile_averager, output_dir, 'profiles', max_writes=40)  
-sshellWriter  = HandlerWriter(shells, shell_comm, output_dir, 'shell_slice', max_writes=40)  
+scalars = d3FileHandler(vol_averager, output_dir, 'scalar', max_writes=np.inf, iter=10)
+scalars.add_task(0.5*dot(u, u), name='KE', layout='g')
 
-writers = [scalarWriter, esliceWriter, msliceWriter, profileWriter, sshellWriter]
+equatorial = d3FileHandler(eq_slicer, output_dir, 'eq_slice', max_writes=40, sim_dt=0.05)
+meridional = d3FileHandler(azimuthal_averager, output_dir, 'mer_slice', max_writes=40, sim_dt=0.05)
+profile    = d3FileHandler(radialProfile_averager, output_dir, 'profiles', max_writes=40, sim_dt=0.05)
+for handler in [equatorial, meridional, profile]:
+    handler.add_task(T, name='T', layout='g')
+    handler.add_task(dot(ez, curl(u)), name='z_vort', layout='g')
+
+shell = d3FileHandler(eq_slicer, output_dir, 'shell_slice', max_writes=40, sim_dt=0.05)
+shell.add_task(T(r=0.95), name='T_r0.95', layout='g')
+shell.add_task(dot(ez, curl(u))(r=0.95), name='z_vort_r0.95', layout='g')
 
 # Main loop
 start_time = time.time()
 while solver.ok:
     solver.step(dt)
-    for writer in writers:
-        writer.process(solver, dt)
     if solver.iteration % 10 == 0:
         E0 = vol_averager.volume*scalarWriter.tasks['KE']
         logger.info("t = %f, E = %e" %(solver.sim_time, E0))
