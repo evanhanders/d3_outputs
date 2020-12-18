@@ -337,7 +337,6 @@ class EquatorSlicer(OutputTask):
                 raise NotImplementedError("Only scalars and tensors are implemented")
 
         if not comm:
-            print('outputting local piece')
             if len(fd.tensorsig) == 1:
                 return self.local_t_equator
             elif len(fd.tensorsig) == 0:
@@ -363,10 +362,9 @@ class EquatorSlicer(OutputTask):
             self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.global_equator, op=MPI.SUM)
             return self.global_equator
 
+class OutputRadialInterpolate(OutputTask):
 
-class SphericalShellCommunicator(OutputTask):
-
-    def __init__(self, field):
+    def __init__(self, field, interp_operator):
         """
         Initialize the slice plotter.
 
@@ -374,39 +372,18 @@ class SphericalShellCommunicator(OutputTask):
             field (Field) :
                 A dummy field used to figure out integral weights, basis, etc.
         """
-        super(SphericalShellCommunicator, self).__init__(field)
+        super(OutputRadialInterpolate, self).__init__(field)
+        self.constant = (self.constant[0], self.constant[1], True)
         self.global_shape = [self.global_shape[0], self.global_shape[1], 1]
-        self.local_elements = [self.local_elements[0], self.local_elements[1], np.zeros(1, dtype=int)]
-        self.constant = (self.constant[0], True, self.constant[2])
-        self.buff = np.zeros(self.global_shape)
-        self.t_buff = np.zeros([3,] + self.global_shape)
-        self.tS2_buff = np.zeros([2,] + self.global_shape)
+        output = interp_operator.evaluate()
+        self.local_shape = output['g'].shape[len(output.tensorsig):]
+        if np.prod(self.local_shape) > 0:
+            self.local_elements = [self.local_elements[0], self.local_elements[1], np.zeros(1, dtype=int)]
+        else:
+            self.local_elements = [self.local_elements[0], self.local_elements[1], None]
 
-    def __call__(self, fd, comm=False):
-        if len(fd.tensorsig) > 1:
-            raise NotImplementedError("Only scalars and tensors are implemented")
-        arr = fd['g']
-        self.buff[:] = 0
-        self.t_buff[:] = 0
-        self.tS2_buff[:] = 0
-        if np.prod(arr.shape) > 0:
-            if len(fd.tensorsig) == 1:
-                if arr.shape[0] == 2:
-                    self.tS2_buff[:, self.gslices[0], self.gslices[1], :] = arr
-                else:
-                    self.t_buff[:, self.gslices[0], self.gslices[1], :] = arr
-            elif len(fd.tensorsig) == 0:
-                self.buff[self.gslices[0], self.gslices[1], :] = arr
-        if len(fd.tensorsig) == 1:
-            if arr.shape[0] == 2:
-                if comm:
-                    self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.tS2_buff, op=MPI.SUM)
-                return self.tS2_buff
-            else:
-                if comm:
-                    self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.t_buff, op=MPI.SUM)
-                return self.t_buff
-        elif len(fd.tensorsig) == 0:
-            if comm:
-                self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.buff, op=MPI.SUM)
-            return self.buff
+    def __call__(self, field):
+        """
+        Returns the interpolated field on grid space
+        """
+        return field['g']
