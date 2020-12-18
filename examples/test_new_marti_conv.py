@@ -74,6 +74,7 @@ dot = lambda A, B: arithmetic.DotProduct(A, B)
 cross = lambda A, B: arithmetic.CrossProduct(A, B)
 ddt = lambda A: operators.TimeDerivative(A)
 LiftTau = lambda A: operators.LiftTau(A, b, -1)
+angComp = lambda A, i=0: operators.AngularComponent(A, i)
 
 # Problem
 def eq_eval(eq_str):
@@ -114,10 +115,13 @@ profile    = d3FileHandler(solver, radialProfile_averager, '{:s}/profiles'.forma
 for handler in [equatorial, meridional, profile]:
     handler.add_task(T, name='T', layout='g')
     handler.add_task(dot(ez, curl(u)), name='z_vort', layout='g')
+    handler.add_task(u, name='u', layout='g')
 
-shell = d3FileHandler(solver, eq_slicer, '{:s}/shell_slice'.format(output_dir), max_writes=40, sim_dt=0.05)
+shell = d3FileHandler(solver, shell_comm, '{:s}/shell_slice'.format(output_dir), max_writes=40, sim_dt=0.05)
 shell.add_task(T(r=0.95), name='T_r0.95', layout='g')
 shell.add_task(dot(ez, curl(u))(r=0.95), name='z_vort_r0.95', layout='g')
+shell.add_task(angComp(u(r=0.95)), name='u_S2', layout='g')
+shell.add_task(u(r=0.95), name='u_vector', layout='g')
 
 # Main loop
 start_time = time.time()
