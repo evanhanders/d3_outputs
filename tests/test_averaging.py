@@ -41,7 +41,7 @@ def make_ballShell_basis(NmaxB, NmaxS, Lmax, r_inner, r_outer, dtype=np.float64,
 #radComp   = lambda A: operators.RadialComponent(A)
 #angComp   = lambda A, index=1: operators.AngularComponent(A, index=index)
 
-@pytest.mark.parametrize('dtype', [np.complex128, np.float64])
+@pytest.mark.parametrize('dtype', [np.float64])
 @pytest.mark.parametrize('Nmax', [15])
 @pytest.mark.parametrize('Lmax', [14])
 @pytest.mark.parametrize('radius', [1, 2])
@@ -55,7 +55,7 @@ def test_ball_volume_average(Nmax, Lmax, radius, dtype):
     op_avg      = vol_averager(f, comm=True)
     assert np.allclose(true_avg, op_avg)
 
-@pytest.mark.parametrize('dtype', [np.complex128, np.float64])
+@pytest.mark.parametrize('dtype', [np.float64])
 @pytest.mark.parametrize('Nmax', [15])
 @pytest.mark.parametrize('Lmax', [14])
 @pytest.mark.parametrize('r_inner', [0.1, 0.5])
@@ -70,7 +70,7 @@ def test_shell_volume_average(Nmax, Lmax, r_inner, r_outer, dtype):
     op_avg      = vol_averager(f, comm=True)
     assert np.allclose(true_avg, op_avg)
 
-@pytest.mark.parametrize('dtype', [np.complex128, np.float64])
+@pytest.mark.parametrize('dtype', [np.float64])
 @pytest.mark.parametrize('NmaxB', [15])
 @pytest.mark.parametrize('NmaxS', [15])
 @pytest.mark.parametrize('Lmax', [14])
@@ -88,7 +88,7 @@ def test_ballShell_volume_average(NmaxB, NmaxS, Lmax, r_inner, r_outer, dtype):
     op_avg      = vol_averager(fB, fS, comm=True)
     assert np.allclose(true_avg, op_avg)
 
-@pytest.mark.parametrize('dtype', [np.complex128, np.float64])
+@pytest.mark.parametrize('dtype', [np.float64])
 @pytest.mark.parametrize('Nmax', [15])
 @pytest.mark.parametrize('Lmax', [14])
 @pytest.mark.parametrize('radius', [1, 2])
@@ -105,7 +105,7 @@ def test_ball_phi_average(Nmax, Lmax, radius, dtype):
     true_avg = r**2 * np.cos(θ) * (np.pi / (2*np.pi))
     assert np.allclose(true_avg, op_avg)
 
-@pytest.mark.parametrize('dtype', [np.complex128, np.float64])
+@pytest.mark.parametrize('dtype', [np.float64])
 @pytest.mark.parametrize('Nmax', [15])
 @pytest.mark.parametrize('Lmax', [14])
 @pytest.mark.parametrize('r_inner', [1])
@@ -123,7 +123,7 @@ def test_shell_phi_average(Nmax, Lmax, r_inner, r_outer, dtype):
     true_avg = r**2 * np.cos(θ) * (np.pi / (2*np.pi))
     assert np.allclose(true_avg, op_avg)
 
-@pytest.mark.parametrize('dtype', [np.complex128, np.float64])
+@pytest.mark.parametrize('dtype', [np.float64])
 @pytest.mark.parametrize('Nmax', [15])
 @pytest.mark.parametrize('Lmax', [14])
 @pytest.mark.parametrize('radius', [1, 2])
@@ -140,7 +140,7 @@ def test_ball_phi_theta_average(Nmax, Lmax, radius, dtype):
     true_avg = r**2 * (1/2)
     assert np.allclose(true_avg, op_avg)
 
-@pytest.mark.parametrize('dtype', [np.complex128, np.float64])
+@pytest.mark.parametrize('dtype', [np.float64])
 @pytest.mark.parametrize('Nmax', [15])
 @pytest.mark.parametrize('Lmax', [14])
 @pytest.mark.parametrize('r_inner', [1])
