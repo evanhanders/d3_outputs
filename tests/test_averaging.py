@@ -52,7 +52,7 @@ def test_ball_volume_average(Nmax, Lmax, radius, dtype):
     vol_averager = averaging.BallVolumeAverager(f)
     volume      = ((4/3)*np.pi*radius**3)
     true_avg    = (4/5)*np.pi*radius**5 / volume
-    op_avg      = vol_averager(f['g'], comm=True)
+    op_avg      = vol_averager(f, comm=True)
     assert np.allclose(true_avg, op_avg)
 
 @pytest.mark.parametrize('dtype', [np.complex128, np.float64])
@@ -67,7 +67,7 @@ def test_shell_volume_average(Nmax, Lmax, r_inner, r_outer, dtype):
     vol_averager = averaging.ShellVolumeAverager(f)
     volume      = (4/3)*np.pi*(r_outer**3 - r_inner**3)
     true_avg    = (4/5)*np.pi*(r_outer**5 - r_inner**5) / volume
-    op_avg      = vol_averager(f['g'], comm=True)
+    op_avg      = vol_averager(f, comm=True)
     assert np.allclose(true_avg, op_avg)
 
 @pytest.mark.parametrize('dtype', [np.complex128, np.float64])
@@ -85,7 +85,7 @@ def test_ballShell_volume_average(NmaxB, NmaxS, Lmax, r_inner, r_outer, dtype):
     vol_averager = averaging.BallShellVolumeAverager(fB, fS)
     volume      = ((4/3)*np.pi*r_outer**3)
     true_avg    = (4/5)*np.pi*r_outer**5 / volume
-    op_avg      = vol_averager(fB['g'], fS['g'], comm=True)
+    op_avg      = vol_averager(fB, fS, comm=True)
     assert np.allclose(true_avg, op_avg)
 
 @pytest.mark.parametrize('dtype', [np.complex128, np.float64])
@@ -97,11 +97,11 @@ def test_ball_phi_average(Nmax, Lmax, radius, dtype):
     f = field.Field(dist=d, bases=(b,), dtype=dtype)
     averager = averaging.PhiAverager(f)
     f['g'] = r**2 * np.sin(φ)*np.cos(θ)
-    op_avg      = averager(f['g'], comm=True)
+    op_avg      = averager(f, comm=True)
     true_avg    = np.zeros_like(op_avg)
     assert np.allclose(true_avg, op_avg)
     f['g'] = r**2 * np.sin(φ)**2*np.cos(θ)
-    op_avg      = averager(f['g'], comm=True)
+    op_avg      = averager(f, comm=True)
     true_avg = r**2 * np.cos(θ) * (np.pi / (2*np.pi))
     assert np.allclose(true_avg, op_avg)
 
@@ -115,11 +115,11 @@ def test_shell_phi_average(Nmax, Lmax, r_inner, r_outer, dtype):
     f = field.Field(dist=d, bases=(b,), dtype=dtype)
     averager = averaging.PhiAverager(f)
     f['g'] = r**2 * np.sin(φ)*np.cos(θ)
-    op_avg      = averager(f['g'], comm=True)
+    op_avg      = averager(f, comm=True)
     true_avg    = np.zeros_like(op_avg)
     assert np.allclose(true_avg, op_avg)
     f['g'] = r**2 * np.sin(φ)**2*np.cos(θ)
-    op_avg      = averager(f['g'], comm=True)
+    op_avg      = averager(f, comm=True)
     true_avg = r**2 * np.cos(θ) * (np.pi / (2*np.pi))
     assert np.allclose(true_avg, op_avg)
 
@@ -132,11 +132,11 @@ def test_ball_phi_theta_average(Nmax, Lmax, radius, dtype):
     f = field.Field(dist=d, bases=(b,), dtype=dtype)
     averager = averaging.PhiThetaAverager(f)
     f['g'] = r**2 * np.sin(φ)*np.cos(θ)
-    op_avg      = averager(f['g'], comm=True)
+    op_avg      = averager(f, comm=True)
     true_avg    = np.zeros_like(op_avg)
     assert np.allclose(true_avg, op_avg)
     f['g'] = r**2 * np.sin(φ)**2 * 3 * np.cos(θ)**2
-    op_avg      = averager(f['g'], comm=True)
+    op_avg      = averager(f, comm=True)
     true_avg = r**2 * (1/2)
     assert np.allclose(true_avg, op_avg)
 
@@ -150,10 +150,10 @@ def test_shell_phi_theta_average(Nmax, Lmax, r_inner, r_outer, dtype):
     f = field.Field(dist=d, bases=(b,), dtype=dtype)
     averager = averaging.PhiThetaAverager(f)
     f['g'] = r**2 * np.sin(φ)*np.cos(θ)
-    op_avg      = averager(f['g'], comm=True)
+    op_avg      = averager(f, comm=True)
     true_avg    = np.zeros_like(op_avg)
     assert np.allclose(true_avg, op_avg)
     f['g'] = r**2 * np.sin(φ)**2 * 3 * np.cos(θ)**2
-    op_avg      = averager(f['g'], comm=True)
+    op_avg      = averager(f, comm=True)
     true_avg = r**2 * (1/2)
     assert np.allclose(true_avg, op_avg)

@@ -55,31 +55,23 @@ class PhiAverager(OutputTask):
         self.global_profile = np.zeros((1, *tuple(self.shape[1:])))
         self.global_tensor_profile = np.zeros([3, 1, *tuple(self.shape[1:])])
 
-    def __call__(self, arr, comm=True, tensor=False):
-        """ Takes the azimuthal average of the NumPy array arr. """
-        if tensor:
+    def __call__(self, fd, comm=True):
+        """ Takes the azimuthal average of the Dedalus field. """
+        arr = fd['g']
+        if len(fd.tensorsig) == 1:
             self.global_tensor_profile *= 0
             self.global_tensor_profile[:, :, self.gslices[1], self.gslices[2]] = np.expand_dims(np.sum(self.t_weight_φ*arr, axis=1), axis=1)/self.volume_φ
             if comm:
                 self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.global_tensor_profile, op=MPI.SUM)
-                if self.rank == 0:
-                    return self.global_tensor_profile
-                else:
-                    return (np.nan, np.nan, np.nan)
-            else:
-                return self.global_tensor_profile
-
-        else:
+            return self.global_tensor_profile
+        elif len(fd.tensorsig) == 0:
             self.global_profile *= 0
             self.global_profile[:, self.gslices[1], self.gslices[2]] = np.expand_dims(np.sum(self.weight_φ*arr, axis=0), axis=0)/self.volume_φ
             if comm:
                 self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.global_profile, op=MPI.SUM)
-                if self.rank == 0:
-                    return self.global_profile
-                else:
-                    return np.nan 
-            else:
-                return self.global_profile
+            return self.global_profile
+        else:
+            raise NotImplementedError("Only scalars and tensors are implemented")
 
 class PhiThetaAverager(PhiAverager):
     """
@@ -96,25 +88,63 @@ class PhiThetaAverager(PhiAverager):
         self.pt_global_profile = np.zeros((1, 1, self.shape[2]))
         self.pt_global_t_profile = np.zeros((3, 1, 1, self.shape[2]))
         
-    def __call__(self, arr, tensor=False, comm=True):
-        """ Takes the azimuthal and colatitude average of the NumPy array arr. """
-        arr = super(PhiThetaAverager, self).__call__(arr, tensor=tensor, comm=comm)
-        if tensor: 
+    def __call__(self, fd, comm=True):
+        """ Takes the azimuthal and colatitude average of the Dedalus field. """
+        arr = super(PhiThetaAverager, self).__call__(fd, comm=comm)
+        if len(fd.tensorsig) == 1: 
             arr = arr[:,:,self.gslices[1], self.gslices[2]]
             self.pt_global_t_profile *= 0
             self.pt_global_t_profile[:,:,:, self.gslices[2]] = np.expand_dims(np.sum(self.t_weight_θ*arr, axis=2), axis=2)/self.theta_vol
             if comm:
                 self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.pt_global_t_profile, op=MPI.SUM)
             return self.pt_global_t_profile
-        else:
+        elif len(fd.tensorsig) == 0:
             arr = arr[:,self.gslices[1], self.gslices[2]]
             self.pt_global_profile *= 0
             self.pt_global_profile[:,:, self.gslices[2]] = np.expand_dims(np.sum(self.weight_θ*arr, axis=1), axis=1)/self.theta_vol
             if comm:
                 self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.pt_global_profile, op=MPI.SUM)
             return self.pt_global_profile
+        else:
+            raise NotImplementedError("Only scalars and tensors are implemented")
 
-class BallVolumeAverager(OutputTask):
+class Spherical3DVolumeAverager(OutputTask):
+    
+    def __init__(self, field):
+        super(Spherical3DVolumeAverager, self).__init__(field)
+        self.global_profile = np.zeros((1, 1, 1))
+        self.global_t_profile = np.zeros((3, 1, 1, 1))
+
+    def __call__(self, fd, comm=True):
+        """
+        Performs a volume average over the given field
+
+        # Arguments
+            fd (NumPy array) :
+                A 3D NumPy array on the grid.
+        """
+        arr = fd['g']
+        if len(fd.tensorsig) == 1:
+            avg = np.sum(self.vol_correction*self.weight_r*self.weight_θ*arr.real, axis=(1,2,3))
+            avg *= np.pi/(self.basis.Lmax+1)/self.dealias[1]
+            avg /= self.volume
+            self.global_t_profile[:,0,0,0] = avg
+            if comm:
+                self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.global_t_profile, op=MPI.SUM)
+            return self.global_t_profile
+        elif len(fd.tensorsig) == 0: 
+            avg = np.sum(self.vol_correction*self.weight_r*self.weight_θ*arr.real)
+            avg *= np.pi/(self.basis.Lmax+1)/self.dealias[1]
+            avg /= self.volume
+            self.global_profile[0,0,0] = avg
+            if comm:
+                self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.global_profile, op=MPI.SUM)
+            return self.global_profile
+        else:
+            raise NotImplementedError("Only scalars and tensors are implemented")
+
+
+class BallVolumeAverager(Spherical3DVolumeAverager):
 
     def __init__(self, field):
         """
@@ -133,23 +163,7 @@ class BallVolumeAverager(OutputTask):
         self.volume   = 4*np.pi*self.basis.radial_basis.radius**3/3
         self.vol_correction = self.volume/self.vol_test
 
-    def __call__(self, arr, comm=True):
-        """
-        Performs a volume average over the given field
-
-        # Arguments
-            arr (NumPy array) :
-                A 3D NumPy array on the grid.
-        """
-        avg = np.sum(self.vol_correction*self.weight_r*self.weight_θ*arr.real)
-        avg *= np.pi/(self.basis.Lmax+1)/self.dealias[1]
-        avg /= self.volume
-        if comm:
-            return self.reducer.reduce_scalar(avg, MPI.SUM)
-        else:
-            return avg
-
-class ShellVolumeAverager(OutputTask):
+class ShellVolumeAverager(Spherical3DVolumeAverager):
 
     def __init__(self, field):
         """
@@ -169,22 +183,6 @@ class ShellVolumeAverager(OutputTask):
         self.volume   = 4*np.pi*(self.basis.radial_basis.radii[1]**3 - self.basis.radial_basis.radii[0]**3)/3
         self.vol_correction = self.volume/self.vol_test
 
-    def __call__(self, arr, comm=True):
-        """
-        Performs a volume average over the given field
-
-        # Arguments
-            arr (NumPy array) :
-                A 3D NumPy array on the grid.
-        """
-        avg = np.sum(self.vol_correction*self.weight_r*self.weight_θ*arr.real)
-        avg *= np.pi/(self.basis.Lmax+1)/self.dealias[1]
-        avg /= self.volume
-        if comm:
-            return self.reducer.reduce_scalar(avg, MPI.SUM)
-        else:
-            return avg
-
 
 class BallShellVolumeAverager:
 
@@ -201,19 +199,21 @@ class BallShellVolumeAverager:
         self.ball_averager = BallVolumeAverager(ball_field)
         self.shell_averager = ShellVolumeAverager(shell_field)
         self.volume = self.ball_averager.volume + self.shell_averager.volume
+        self.basis = self.ball_averager.basis
+        self.dist  = self.ball_averager.dist
 
-    def __call__(self, ball_arr, shell_arr, comm=True):
+    def __call__(self, ball_fd, shell_fd, comm=True):
         """
         Performs a volume average over the given field
 
         # Arguments
-            ball_arr (NumPy array) :
+            ball_fd (NumPy array) :
                 A 3D NumPy array on the ball.
-            shell_arr (NumPy array) :
+            shell_fd (NumPy array) :
                 A 3D NumPy array on the shell.
         """
-        ball_avg  = self.ball_averager(ball_arr, comm=comm)
-        shell_avg = self.shell_averager(shell_arr, comm=comm)
+        ball_avg  = self.ball_averager(ball_fd, comm=comm)
+        shell_avg = self.shell_averager(shell_fd, comm=comm)
         avg = (ball_avg*self.ball_averager.volume + shell_avg*self.shell_averager.volume)/self.volume
         return avg
 
@@ -243,29 +243,33 @@ class EquatorSlicer(OutputTask):
             self.tplot = False
 
         self.global_equator = np.zeros((self.shape[0], 1, self.shape[2]))
+        self.global_t_equator = np.zeros((3, self.shape[0], 1, self.shape[2]))
         self.include_data = self.dist.comm_cart.gather(self.tplot)
 
-    def __call__(self, arr, comm=True):
+    def __call__(self, fd, comm=True):
         """ Communicate local plot data globally """
-        if self.i_θ is None:
+        if len(fd.tensorsig) > 1:
+            raise NotImplementedError("Only scalars and tensors are implemented")
+        arr = fd['g']
+        if not self.tplot:
             eq_slice = np.zeros_like(arr)
         else:
-            eq_slice = arr[:,self.i_θ,:].real 
-        if comm:
-            eq_slice = self.dist.comm_cart.gather(eq_slice, root=0)
-            with Sync():
-                data = []
-                if self.rank == 0:
-                    for s, i in zip(eq_slice, self.include_data):
-                        if i: data.append(s)
-                    data = np.array(data)
-                    return np.expand_dims(np.transpose(data, axes=(1,0,2)).reshape((self.shape[0], self.shape[2])), axis=1)
-                else:
-                    return np.nan
-        else:
-            if self.tplot:
+            if len(fd.tensorsig) == 1:
+                eq_slice = arr[:,:,self.i_θ,:].real 
+                self.global_t_equator[:,:,0,self.gslices[2]] = eq_slice
+            elif len(fd.tensorsig) == 0:
+                eq_slice = arr[:,self.i_θ,:].real 
                 self.global_equator[:,0,self.gslices[2]] = eq_slice
+
+        if len(fd.tensorsig) == 1:
+            if comm:
+                self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.global_t_equator, op=MPI.SUM)
+            return self.global_t_equator
+        elif len(fd.tensorsig) == 0:
+            if comm:
+                self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.global_equator, op=MPI.SUM)
             return self.global_equator
+
 
 class SphericalShellCommunicator(OutputTask):
 
@@ -279,12 +283,34 @@ class SphericalShellCommunicator(OutputTask):
         """
         super(SphericalShellCommunicator, self).__init__(field)
         self.buff = np.zeros((self.shape[0], self.shape[1], 1))
+        self.t_buff = np.zeros((3, self.shape[0], self.shape[1], 1))
+        self.tS2_buff = np.zeros((2, self.shape[0], self.shape[1], 1))
 
-    def __call__(self, arr, comm=True):
-        self.buff *= 0
+    def __call__(self, fd, comm=True):
+        if len(fd.tensorsig) > 1:
+            raise NotImplementedError("Only scalars and tensors are implemented")
+        arr = fd['g']
+        self.buff[:] = 0
+        self.t_buff[:] = 0
+        self.tS2_buff[:] = 0
         if np.prod(arr.shape) > 0:
-            self.buff[self.gslices[0], self.gslices[1], :] = arr
-        if comm:
-            self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.buff, op=MPI.SUM)
-        else:
+            if len(fd.tensorsig) == 1:
+                if arr.shape[0] == 2:
+                    self.tS2_buff[:, self.gslices[0], self.gslices[1], :] = arr
+                else:
+                    self.t_buff[:, self.gslices[0], self.gslices[1], :] = arr
+            elif len(fd.tensorsig) == 0:
+                self.buff[self.gslices[0], self.gslices[1], :] = arr
+        if len(fd.tensorsig) == 1:
+            if arr.shape[0] == 2:
+                if comm:
+                    self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.tS2_buff, op=MPI.SUM)
+                return self.tS2_buff
+            else:
+                if comm:
+                    self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.t_buff, op=MPI.SUM)
+                return self.t_buff
+        elif len(fd.tensorsig) == 0:
+            if comm:
+                self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.buff, op=MPI.SUM)
             return self.buff

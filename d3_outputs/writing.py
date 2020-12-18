@@ -26,8 +26,8 @@ class d3FileHandler(FileHandler):
         super(d3FileHandler, self).__init__(filename, self.evaluator.dist, self.evaluator.vars, **kwargs)
         self.basis = self.operation.basis
         self.comm  = self.operation.dist.comm_cart
-        self.shape = None
-        self.buff  = None
+        self.shapes = []
+        self.buffs  = []
         self.current_file_name = None
 
         self.write_tasks      = OrderedDict()
@@ -41,7 +41,8 @@ class d3FileHandler(FileHandler):
        
     def create_file(self):
         """ Creates and returns the output file """
-        self.current_file_name = '{:s}_s{}.h5'.format(self.base_path.stem, int(self.writes/self.max_writes)+1)
+        this_file_name = '{:s}_s{}.h5'.format(self.base_path.stem, int(self.writes/self.max_writes)+1)
+        self.current_file_name = self.base_path.joinpath(this_file_name)
         file = h5py.File(self.current_file_name, 'w')
  
         # Scale group
@@ -54,10 +55,11 @@ class d3FileHandler(FileHandler):
             scale_group.create_dataset(name='{}/1.0'.format(k), data=grid)
  
         task_group = file.create_group('tasks')
-        for nm in self.write_tasks.keys():
-            shape    = tuple([0] + [d for d in self.shape])
-            maxshape = tuple([None] + [d for d in self.shape])
-            task_group.create_dataset(name=nm, shape=shape, maxshape=maxshape, dtype=np.float64)
+        for task in self.tasks:
+            this_shape = self.shapes[task['shape_ind']]
+            shape    = tuple([0] + [d for d in this_shape])
+            maxshape = tuple([None] + [d for d in this_shape])
+            task_group.create_dataset(name=task['name'], shape=shape, maxshape=maxshape, dtype=np.float64)
 
         return file
 
@@ -72,19 +74,42 @@ class d3FileHandler(FileHandler):
         return file
 
     def apply_operation(self):
+        #Set up buffer space for communication on first write
+        if len(self.shapes) == 0:
+            for task_num, task in enumerate(self.tasks):
+                out = task['out']
+                out.require_scales(task['scales'])
+                out.require_layout(task['layout'])
+                operated_task = self.operation(out, comm=False)
+                have_shape = False
+                for ind, shape in enumerate(self.shapes):
+                    if len(operated_task.shape) == len(shape):
+                        shapes_not_equal = [s1 != s2 for s1, s2 in zip(operated_task.shape, shape)]
+                        if True not in shapes_not_equal:    
+                            have_shape = True
+                            task['shape_ind'] = ind
+                            break
+                if not have_shape:
+                    self.shapes.append(operated_task.shape)
+                    task['shape_ind'] = int(len(self.shapes)-1)
+            for ind, shape in enumerate(self.shapes):
+                buff_ind = 0
+                for task_num, task in enumerate(self.tasks):
+                    if task['shape_ind'] == ind:
+                        task['buff_ind'] = buff_ind
+                        buff_ind += 1
+                self.buffs.append(np.zeros(tuple([buff_ind] + list(shape)), dtype=np.float64))
+
         for task_num, task in enumerate(self.tasks):
             out = task['out']
             out.require_scales(task['scales'])
             out.require_layout(task['layout'])
-            if self.shape is None:
-                self.shape = self.operation(out['g'], comm=False).shape
-                self.buff = np.zeros((len(self.tasks), *tuple(self.shape)))
+            self.buffs[task['shape_ind']][task['buff_ind'],:] = self.operation(out, comm=False)
 
-            self.buff[task_num] = self.operation(out['g'], comm=False)
-
-        self.comm.Allreduce(MPI.IN_PLACE, self.buff, op=MPI.SUM)
+        for buff_ind, buff in enumerate(self.buffs):
+            self.comm.Allreduce(MPI.IN_PLACE, self.buffs[buff_ind], op=MPI.SUM)
         for task_num, task in enumerate(self.tasks):
-            self.write_tasks[task['name']] = self.buff[task_num]
+            self.write_tasks[task['name']] = self.buffs[task['shape_ind']][task['buff_ind'],:]
       
     def process(self, **kw):
         """ Write to file """
