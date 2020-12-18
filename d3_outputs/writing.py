@@ -30,12 +30,13 @@ class d3FileHandler(FileHandler):
         self.buffs  = []
         self.current_file_name = None
 
-        self.write_tasks      = OrderedDict()
+        self.write_tasks = OrderedDict()
+        self.extra_tasks = OrderedDict()
         self.writes     = 0
 
         self.evaluator.add_handler(self)
 
-    def extra_tasks(self):
+    def define_extra_tasks(self):
         """ A function which should be implemented right before the loop, defining tasks to evaluate in terms of simulation fields. """
         pass
        
@@ -60,6 +61,11 @@ class d3FileHandler(FileHandler):
             shape    = tuple([0] + [d for d in this_shape])
             maxshape = tuple([None] + [d for d in this_shape])
             task_group.create_dataset(name=task['name'], shape=shape, maxshape=maxshape, dtype=np.float64)
+        for task_nm, task in self.extra_tasks.items():
+            this_shape = task.shape
+            shape    = tuple([0] + [d for d in this_shape])
+            maxshape = tuple([None] + [d for d in this_shape])
+            task_group.create_dataset(name=task_nm, shape=shape, maxshape=maxshape, dtype=np.float64)
 
         return file
 
@@ -114,7 +120,7 @@ class d3FileHandler(FileHandler):
     def process(self, **kw):
         """ Write to file """
         self.apply_operation()
-        self.extra_tasks()
+        self.define_extra_tasks()
         with Sync(self.comm):
             if self.comm.rank == 0:
                 if self.writes % self.max_writes == 0:
