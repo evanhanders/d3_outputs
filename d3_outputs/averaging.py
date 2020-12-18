@@ -31,7 +31,17 @@ class OutputTask:
         self.dist = field.dist
         self.rank = self.dist.comm_cart.rank
         self.dealias = domain.dealias
-        self.shape = domain.grid_shape(self.dealias)
+
+        #Get local and global shapes of base field
+        tensor_length = len(field.tensorsig)
+        field_shape = field['g'].shape
+        shape_length  = len(field_shape)
+        self.local_shape = []
+        for i in range(shape_length - tensor_length):
+            self.local_shape.append(field_shape[i+tensor_length])
+        self.global_shape = domain.grid_shape(self.dealias)
+        self.local_elements = [np.arange(self.gslices[i].start, self.gslices[i].stop, self.gslices[i].step, dtype=int) for i in range(self.dist.dim)]
+
 
 class PhiAverager(OutputTask):
 
@@ -47,13 +57,16 @@ class PhiAverager(OutputTask):
         #Find integral weights
         self.φg        = self.basis.global_grid_azimuth(self.dealias[0])
         self.global_weight_φ = (np.ones_like(self.φg)*np.pi/((self.basis.Lmax+1)*self.dealias[0]))
-        self.weight_φ = self.global_weight_φ[self.gslices[0],:,:].reshape((self.shape[0], 1, 1))
+        self.weight_φ = self.global_weight_φ[self.gslices[0],:,:].reshape((self.global_shape[0], 1, 1))
         self.t_weight_φ = np.expand_dims(self.weight_φ, axis=0)
         self.volume_φ = np.sum(self.global_weight_φ)
+        self.local_shape = [1, self.local_shape[1], self.local_shape[2]]
+        self.global_shape = [1, self.global_shape[1], self.global_shape[2]]
+        self.local_elements = [np.zeros(1, dtype=int), self.local_elements[1], self.local_elements[2]]
 
         #Set up memory space
-        self.global_profile = np.zeros((1, *tuple(self.shape[1:])))
-        self.global_tensor_profile = np.zeros([3, 1, *tuple(self.shape[1:])])
+        self.global_profile = np.zeros(self.global_shape)
+        self.global_tensor_profile = np.zeros([3,] + self.global_shape)
 
     def __call__(self, fd, comm=True):
         """ Takes the azimuthal average of the Dedalus field. """
@@ -79,14 +92,17 @@ class PhiThetaAverager(PhiAverager):
     """
     def __init__(self, field):
         super(PhiThetaAverager, self).__init__(field)
+        self.local_shape = [1, 1, self.local_shape[2]]
+        self.global_shape = [1, 1, self.global_shape[2]]
+        self.local_elements = [np.zeros(1, dtype=int), np.zeros(1, dtype=int), self.local_elements[2]]
         self.weight_θ = self.basis.local_colatitude_weights(self.dealias[1])
         self.t_weight_θ = np.expand_dims(self.basis.local_colatitude_weights(self.dealias[1]), axis=0)
 
         global_weight_θ = self.basis.global_colatitude_weights(self.dealias[1])
         self.theta_vol = np.sum(global_weight_θ)
 
-        self.pt_global_profile = np.zeros((1, 1, self.shape[2]))
-        self.pt_global_t_profile = np.zeros((3, 1, 1, self.shape[2]))
+        self.pt_global_profile = np.zeros(self.global_shape)
+        self.pt_global_t_profile = np.zeros([3,] + self.global_shape)
         
     def __call__(self, fd, comm=True):
         """ Takes the azimuthal and colatitude average of the Dedalus field. """
@@ -112,8 +128,11 @@ class Spherical3DVolumeAverager(OutputTask):
     
     def __init__(self, field):
         super(Spherical3DVolumeAverager, self).__init__(field)
-        self.global_profile = np.zeros((1, 1, 1))
-        self.global_t_profile = np.zeros((3, 1, 1, 1))
+        self.local_shape = [1, 1, 1]
+        self.global_shape = [1, 1, 1]
+        self.local_elements = [np.zeros(1, dtype=int), np.zeros(1, dtype=int), np.zeros(1, dtype=int)]
+        self.global_profile = np.zeros(self.global_shape)
+        self.global_t_profile = np.zeros([3,] + self.global_shape)
 
     def __call__(self, fd, comm=True):
         """
@@ -235,23 +254,25 @@ class EquatorSlicer(OutputTask):
         θg    = self.basis.global_grid_colatitude(self.dealias[1])
         θl    = self.basis.local_grid_colatitude(self.dealias[1])
         θ_target   = θg[0,(self.basis.Lmax+1)//2,0]
-        if np.prod(θl.shape) != 0:
+        if θ_target in θl:
             self.i_θ = np.argmin(np.abs(θl[0,:,0] - θ_target))
-            self.tplot = θ_target in θl
+            self.local_shape = [self.local_shape[0], 1, self.local_shape[2]]
+            self.local_elements = [self.local_elements[0], np.zeros(1, dtype=int), self.local_elements[2]]
         else:
             self.i_θ = None
-            self.tplot = False
+            self.local_shape = [self.local_shape[0], None, self.local_shape[2]]
+            self.local_elements = [self.local_elements[0], None, self.local_elements[2]]
+        self.global_shape = [self.global_shape[0], 1, self.global_shape[2]]
 
-        self.global_equator = np.zeros((self.shape[0], 1, self.shape[2]))
-        self.global_t_equator = np.zeros((3, self.shape[0], 1, self.shape[2]))
-        self.include_data = self.dist.comm_cart.gather(self.tplot)
+        self.global_equator = np.zeros(self.global_shape)
+        self.global_t_equator = np.zeros([3,] + self.global_shape)
 
     def __call__(self, fd, comm=True):
         """ Communicate local plot data globally """
         if len(fd.tensorsig) > 1:
             raise NotImplementedError("Only scalars and tensors are implemented")
         arr = fd['g']
-        if not self.tplot:
+        if self.local_elements[1] is None:
             eq_slice = np.zeros_like(arr)
         else:
             if len(fd.tensorsig) == 1:
@@ -282,9 +303,11 @@ class SphericalShellCommunicator(OutputTask):
                 A dummy field used to figure out integral weights, basis, etc.
         """
         super(SphericalShellCommunicator, self).__init__(field)
-        self.buff = np.zeros((self.shape[0], self.shape[1], 1))
-        self.t_buff = np.zeros((3, self.shape[0], self.shape[1], 1))
-        self.tS2_buff = np.zeros((2, self.shape[0], self.shape[1], 1))
+        self.global_shape = [self.global_shape[0], self.global_shape[1], 1]
+        self.local_elements = [self.local_elements[0], self.local_elements[1], np.zeros(1, dtype=int)]
+        self.buff = np.zeros(self.global_shape)
+        self.t_buff = np.zeros([3,] + self.global_shape)
+        self.tS2_buff = np.zeros([2,] + self.global_shape)
 
     def __call__(self, fd, comm=True):
         if len(fd.tensorsig) > 1:
