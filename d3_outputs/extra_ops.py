@@ -96,7 +96,6 @@ class PhiAverager(OutputTask):
 
         if len(fd.tensorsig) == 1: 
             self.global_t_profile [:] = 0
-            print(self.local_slices)
             self.global_t_profile[(slice(0,3,1),)+self.local_slices] = self.local_t_profile
             self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.global_t_profile, op=MPI.SUM)
             return self.global_t_profile

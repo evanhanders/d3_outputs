@@ -11,7 +11,7 @@ from dedalus.core import coords, distributor, basis, field, operators
 from dedalus.tools import logging
 from dedalus.tools.parsing import split_equation
 from dedalus.extras.flow_tools import GlobalArrayReducer
-import d3_outputs.averaging as averaging
+import d3_outputs.extra_ops as extra_ops
 
 def make_ball_basis(Nmax, Lmax, radius, dtype=np.float64, dealias=1, mesh=None, comm=MPI.COMM_WORLD):
     c    = coords.SphericalCoordinates('φ', 'θ', 'r')
@@ -44,7 +44,7 @@ def test_ball_volume_average(Nmax, Lmax, radius, dtype, mesh):
         c, d, b, φ, θ, r = make_ball_basis(Nmax, Lmax, radius, dtype=dtype, mesh=this_mesh, comm=comm)
         f = field.Field(dist=d, bases=(b,), dtype=dtype)
         f['g'] = r**2
-        vol_averager = averaging.BallVolumeAverager(f)
+        vol_averager = extra_ops.BallVolumeAverager(f)
         op_avg      = vol_averager(f, comm=True)
         op_outs.append(op_avg)
     assert np.allclose(op_outs[0], op_outs[1])
@@ -61,7 +61,7 @@ def test_shell_volume_average(Nmax, Lmax, r_inner, r_outer, dtype, mesh):
         c, d, b, φ, θ, r = make_shell_basis(Nmax, Lmax, r_inner, r_outer, dtype=dtype, mesh=this_mesh, comm=comm)
         f = field.Field(dist=d, bases=(b,), dtype=dtype)
         f['g'] = r**2
-        vol_averager = averaging.ShellVolumeAverager(f)
+        vol_averager = extra_ops.ShellVolumeAverager(f)
         op_avg      = vol_averager(f, comm=True)
         op_outs.append(op_avg)
     assert np.allclose(op_outs[0], op_outs[1])
@@ -81,7 +81,7 @@ def test_ballShell_volume_average(NmaxB, NmaxS, Lmax, r_inner, r_outer, dtype, m
         fS = field.Field(dist=d, bases=(bS,), dtype=dtype)
         fB['g'] = rB**2
         fS['g'] = rS**2
-        vol_averager = averaging.BallShellVolumeAverager(fB, fS)
+        vol_averager = extra_ops.BallShellVolumeAverager(fB, fS)
         op_avg      = vol_averager(fB, fS, comm=True)
         op_outs.append(op_avg)
     assert np.allclose(op_outs[0], op_outs[1])
@@ -96,7 +96,7 @@ def test_ball_phi_average(Nmax, Lmax, radius, dtype, mesh):
     for this_mesh, comm in zip((mesh, None), (MPI.COMM_WORLD, MPI.COMM_SELF)):
         c, d, b, φ, θ, r = make_ball_basis(Nmax, Lmax, radius, dtype=dtype, mesh=this_mesh, comm=comm)
         f = field.Field(dist=d, bases=(b,), dtype=dtype)
-        averager = averaging.PhiAverager(f)
+        averager = extra_ops.PhiAverager(f)
         f['g'] = r**2 * np.sin(φ)**2*np.cos(θ)
         op_avg      = averager(f, comm=True)
         op_outs.append(op_avg)
@@ -113,7 +113,7 @@ def test_shell_phi_average(Nmax, Lmax, r_inner, r_outer, dtype, mesh):
     for this_mesh, comm in zip((mesh, None), (MPI.COMM_WORLD, MPI.COMM_SELF)):
         c, d, b, φ, θ, r = make_shell_basis(Nmax, Lmax, r_inner, r_outer, dtype=dtype, mesh=this_mesh, comm=comm)
         f = field.Field(dist=d, bases=(b,), dtype=dtype)
-        averager = averaging.PhiAverager(f)
+        averager = extra_ops.PhiAverager(f)
         f['g'] = r**2 * np.sin(φ)**2*np.cos(θ)
         op_avg      = averager(f, comm=True)
         op_outs.append(op_avg)
@@ -129,7 +129,7 @@ def test_ball_phi_theta_average(Nmax, Lmax, radius, dtype, mesh):
     for this_mesh, comm in zip((mesh, None), (MPI.COMM_WORLD, MPI.COMM_SELF)):
         c, d, b, φ, θ, r = make_ball_basis(Nmax, Lmax, radius, dtype=dtype, mesh=this_mesh, comm=comm)
         f = field.Field(dist=d, bases=(b,), dtype=dtype)
-        averager = averaging.PhiThetaAverager(f)
+        averager = extra_ops.PhiThetaAverager(f)
         f['g'] = r**2 * np.sin(φ)**2 * 3 * np.cos(θ)**2
         op_avg      = averager(f, comm=True)
         op_outs.append(op_avg)
@@ -146,7 +146,7 @@ def test_shell_phi_theta_average(Nmax, Lmax, r_inner, r_outer, dtype, mesh):
     for this_mesh, comm in zip((mesh, None), (MPI.COMM_WORLD, MPI.COMM_SELF)):
         c, d, b, φ, θ, r = make_shell_basis(Nmax, Lmax, r_inner, r_outer, dtype=dtype, mesh=this_mesh, comm=comm)
         f = field.Field(dist=d, bases=(b,), dtype=dtype)
-        averager = averaging.PhiThetaAverager(f)
+        averager = extra_ops.PhiThetaAverager(f)
         f['g'] = r**2 * np.sin(φ)**2 * 3 * np.cos(θ)**2
         op_avg      = averager(f, comm=True)
         op_outs.append(op_avg)
@@ -163,7 +163,7 @@ def test_ball_S2_outputter(Nmax, Lmax, radius, dtype, mesh):
         c, d, b, φ, θ, r = make_ball_basis(Nmax, Lmax, radius, dtype=dtype, mesh=this_mesh, comm=comm)
         f = field.Field(dist=d, bases=(b,), dtype=dtype)
         interp_op = f(r=0.5*radius)
-        averager = averaging.OutputRadialInterpolate(f, interp_op)
+        averager = extra_ops.OutputRadialInterpolate(f, interp_op)
         f['g'] = r**2 * np.sin(φ)**2 * 3 * np.cos(θ)**2
         op_avg      = averager(interp_op.evaluate(), comm=True)
         op_outs.append(op_avg)

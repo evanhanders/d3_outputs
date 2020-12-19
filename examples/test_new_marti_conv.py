@@ -96,7 +96,7 @@ solver = solvers.InitialValueSolver(problem, ts)
 solver.stop_sim_time = t_end
 
 # Analysis
-from d3_outputs.averaging    import BallVolumeAverager, PhiAverager, PhiThetaAverager, EquatorSlicer, OutputRadialInterpolate
+from d3_outputs.extra_ops    import BallVolumeAverager, PhiAverager, PhiThetaAverager, EquatorSlicer, OutputRadialInterpolate
 from d3_outputs.writing      import d3FileHandler
 output_dir = './'
 vol_averager       = BallVolumeAverager(p)
@@ -105,15 +105,15 @@ radialProfile_averager = PhiThetaAverager(p)
 eq_slicer = EquatorSlicer(p)
 
 scalars = d3FileHandler(solver, '{:s}/scalar'.format(output_dir), max_writes=np.inf, iter=10)
-scalars.add_task(0.5*dot(u, u), extra_op=vol_averager, name='KE', layout='g')
+scalars.add_task(0.5*dot(u, u), extra_op=vol_averager, name='KE', layout='g', extra_op_comm=True) #extra_op_comm=True so we only write one scalar file rather than Ncpu files
 
 equatorial = d3FileHandler(solver, '{:s}/eq_slice'.format(output_dir), max_writes=40, sim_dt=0.05)
 meridional = d3FileHandler(solver, '{:s}/mer_slice'.format(output_dir), max_writes=40, sim_dt=0.05)
 profile    = d3FileHandler(solver, '{:s}/profiles'.format(output_dir), max_writes=40, sim_dt=0.05)
-for handler, op in zip([equatorial, meridional, profile], [eq_slicer, azimuthal_averager, radialProfile_averager]):
-    handler.add_task(T, extra_op=op, name='T', layout='g')
-    handler.add_task(dot(ez, curl(u)), extra_op=op, name='z_vort', layout='g')
-    handler.add_task(u, extra_op=op, name='u', layout='g')
+for handler, op, op_comm in zip([equatorial, meridional, profile], [eq_slicer, azimuthal_averager, radialProfile_averager], [False, False, True]):
+    handler.add_task(T, extra_op=op, name='T', layout='g', extra_op_comm=op_comm)
+    handler.add_task(dot(ez, curl(u)), extra_op=op, name='z_vort', layout='g', extra_op_comm=op_comm)
+    handler.add_task(u, extra_op=op, name='u', layout='g', extra_op_comm=op_comm)
 
 shell = d3FileHandler(solver, '{:s}/shell_slice'.format(output_dir), max_writes=40, sim_dt=0.05)
 shell.add_task(T(r=0.95), extra_op=OutputRadialInterpolate(T, T(r=0.95)), name='T_r0.95', layout='g')
