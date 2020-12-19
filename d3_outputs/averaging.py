@@ -69,7 +69,7 @@ class PhiAverager(OutputTask):
         self.local_shape = [1, self.local_shape[1], self.local_shape[2]]
         self.global_shape = [1, self.global_shape[1], self.global_shape[2]]
         self.local_elements = [np.zeros(1, dtype=int), self.local_elements[1], self.local_elements[2]]
-        self.local_slices   = (0, self.local_slices[1], self.local_slices[2])
+        self.local_slices   = (slice(0,1,1), self.local_slices[1], self.local_slices[2])
         self.constant = (True, self.constant[1], self.constant[2])
 
         #Set up memory space
@@ -96,13 +96,13 @@ class PhiAverager(OutputTask):
 
         if len(fd.tensorsig) == 1: 
             self.global_t_profile [:] = 0
-            self.global_t_profile[:,self.local_slices] = self.local_t_profile
-            self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.pt_global_t_profile, op=MPI.SUM)
+            print(self.local_slices)
+            self.global_t_profile[(slice(0,3,1),)+self.local_slices] = self.local_t_profile
+            self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.global_t_profile, op=MPI.SUM)
             return self.global_t_profile
         elif len(fd.tensorsig) == 0:
             self.global_profile[:] = 0
             self.global_profile[self.local_slices] = self.local_profile
-            print(self.global_profile,self.global_profile[self.local_slices] )
             self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.global_profile, op=MPI.SUM)
             return self.global_profile
 
@@ -121,7 +121,7 @@ class PhiThetaAverager(OutputTask):
         self.local_shape = [1, 1, self.local_shape[2]]
         self.global_shape = [1, 1, self.global_shape[2]]
         self.local_elements = [np.zeros(1, dtype=int), np.zeros(1, dtype=int), self.local_elements[2]]
-        self.local_slices   = (0, 0, self.local_slices[2])
+        self.local_slices   = (slice(0,1,1), slice(0,1,1), self.local_slices[2])
         self.constant = (True, True, self.constant[2])
         self.weight_θ = self.basis.local_colatitude_weights(self.dealias[1])
         self.t_weight_θ = np.expand_dims(self.basis.local_colatitude_weights(self.dealias[1]), axis=0)
@@ -152,9 +152,9 @@ class PhiThetaAverager(OutputTask):
 
         if len(fd.tensorsig) == 1: 
             self.global_t_profile [:] = 0
-            self.global_t_profile[:,self.local_slices] = self.local_t_profile
+            self.global_t_profile[(slice(0,3,1),) + self.local_slices] = self.local_t_profile
             if comm:
-                self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.pt_global_t_profile, op=MPI.SUM)
+                self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.global_t_profile, op=MPI.SUM)
             return self.global_t_profile
         elif len(fd.tensorsig) == 0:
             self.global_profile [:] = 0
@@ -304,7 +304,7 @@ class EquatorSlicer(OutputTask):
             self.i_θ = np.argmin(np.abs(θl[0,:,0] - θ_target))
             self.local_shape = [self.local_shape[0], 1, self.local_shape[2]]
             self.local_elements = [self.local_elements[0], np.zeros(1, dtype=int), self.local_elements[2]]
-            self.local_slices   = (self.local_slices[0], 0, self.local_slices[2])
+            self.local_slices   = (self.local_slices[0], slice(0,1,1), self.local_slices[2])
         else:
             self.i_θ = None
             self.local_shape = [self.local_shape[0], 0, self.local_shape[2]]
@@ -323,9 +323,9 @@ class EquatorSlicer(OutputTask):
         arr = fd['g']
         if self.local_elements[1] is None:
             if len(fd.tensorsig) == 1:
-                self.local_t_equator *= 0
+                self.local_t_equator[:] = 0
             elif len(fd.tensorsig) == 0:
-                self.local_t_equator *= 0
+                self.local_t_equator[:] = 0
             else:
                 raise NotImplementedError("Only scalars and tensors are implemented")
         else:
@@ -344,13 +344,13 @@ class EquatorSlicer(OutputTask):
             
         if self.local_elements[1] is None:
             if len(fd.tensorsig) == 1:
-                self.global_t_equator *= 0
+                self.global_t_equator[:] = 0
             elif len(fd.tensorsig) == 0:
-                self.global_t_equator *= 0
+                self.global_equator[:] = 0
         else:
             if len(fd.tensorsig) == 1:
                 self.global_t_equator[:] = 0
-                self.global_t_equator[:,self.local_slices] = self.local_t_equator
+                self.global_t_equator[(slice(0,3,1),)+self.local_slices] = self.local_t_equator
             elif len(fd.tensorsig) == 0:
                 self.global_equator[:] = 0
                 self.global_equator[self.local_slices] = self.local_equator
@@ -376,14 +376,29 @@ class OutputRadialInterpolate(OutputTask):
         self.constant = (self.constant[0], self.constant[1], True)
         self.global_shape = [self.global_shape[0], self.global_shape[1], 1]
         output = interp_operator.evaluate()
-        self.local_shape = output['g'].shape[len(output.tensorsig):]
+        output_shape = output['g'].shape
+        self.local_shape = output_shape[len(output.tensorsig):]
         if np.prod(self.local_shape) > 0:
             self.local_elements = [self.local_elements[0], self.local_elements[1], np.zeros(1, dtype=int)]
+            self.local_slices = (self.local_slices[0], self.local_slices[1], slice(0,1,1))
         else:
             self.local_elements = [self.local_elements[0], self.local_elements[1], None]
+            self.local_slices = (self.local_slices[0], self.local_slices[1], slice(0,0,1))
+        self.full_local_slices = tuple([slice(0, output_shape[i], 1) for i in range(len(output.tensorsig))]) + self.local_slices
 
-    def __call__(self, field):
+        self.local_shell = np.zeros(output_shape[:len(output.tensorsig)] + tuple(self.local_shape))
+        self.global_shell = np.zeros(output_shape[:len(output.tensorsig)] + tuple(self.global_shape))
+
+    def __call__(self, field, comm=False):
         """
         Returns the interpolated field on grid space
         """
-        return field['g']
+        self.local_shell[:] = field['g']
+        if not comm:
+            return self.local_shell
+        else:
+            self.global_shell[:] = 0
+            if self.local_elements[-1] is not None:
+                self.global_shell[self.full_local_slices] = self.local_shell
+            self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.global_shell, op=MPI.SUM)
+            return self.global_shell
