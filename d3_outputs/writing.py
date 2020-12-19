@@ -17,7 +17,7 @@ FILEHANDLER_TOUCH_TMPFILE = config['analysis'].getboolean('FILEHANDLER_TOUCH_TMP
 
 class d3FileHandler(FileHandler):
 
-    def __init__(self, solver, filename, keep_file_open=False, **kwargs):
+    def __init__(self, solver, filename, **kwargs):
         """ 
         An abstract class for writing to .h5 files, inspired by classic dedalus file handlers
 
@@ -28,8 +28,6 @@ class d3FileHandler(FileHandler):
         self.evaluator = solver.evaluator
         super(d3FileHandler, self).__init__(filename, self.evaluator.dist, self.evaluator.vars, **kwargs)
         self.task_dict = OrderedDict()
-        self.keep_file_open = keep_file_open
-        self.stored_file = None
         self.local_file = None
         self.min_process = np.array([self.dist.comm_cart.rank,])
 
@@ -151,14 +149,10 @@ class d3FileHandler(FileHandler):
             self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.min_process, op=MPI.MIN)
         # HACK: fix world time and timestep inputs from solvers.py/timestepper.py
         file = self.get_file()
-        if not self.local_file:
-            self.total_write_num = 0
-            self.file_write_num = 0
-            index = 0
-        else:
-            self.total_write_num += 1
-            self.file_write_num += 1
-            index = self.file_write_num - 1
+        self.total_write_num += 1
+        self.file_write_num += 1
+        index = self.file_write_num - 1
+        if self.local_file:
             file.attrs['writes'] = self.file_write_num
 
             # Update time scales
@@ -206,7 +200,7 @@ class d3FileHandler(FileHandler):
                 if self.local_file:
                     dset.id.write(memory_space, file_space, out_data)
 
-        if self.local_file and not self.keep_file_open or self.file_write_num >= self.max_writes:
+        if self.local_file:
             file.close()
         self.dist.comm_cart.Barrier()
 
@@ -342,24 +336,18 @@ class d3FileHandler(FileHandler):
             self.create_current_file()
         if self.local_file:
             # Open current file
-            if not self.keep_file_open or self.stored_file is None:
-                if self.parallel:
-                    comm = self.dist.comm_cart
-                    h5file = h5py.File(str(self.current_path), 'r+', driver='mpio', comm=comm)
-                else:
-                    h5file = h5py.File(str(self.current_path), 'r+')
-                self.file_write_num = h5file['/scales/write_number'].shape[0]
-                if self.keep_file_open:
-                    self.stored_file = h5file
-                return h5file
+            if self.parallel:
+                comm = self.dist.comm_cart
+                h5file = h5py.File(str(self.current_path), 'r+', driver='mpio', comm=comm)
             else:
-                return self.stored_file
+                h5file = h5py.File(str(self.current_path), 'r+')
+            self.file_write_num = h5file['/scales/write_number'].shape[0]
+            return h5file
         else:
             return None
 
     def create_current_file(self):
         """Generate new HDF5 file in current_path."""
-        self.stored_file = None
         self.file_write_num = 0
         comm = self.dist.comm_cart
         if self.parallel:
