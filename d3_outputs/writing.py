@@ -1,3 +1,4 @@
+import os
 import hashlib
 import pathlib
 from collections import OrderedDict
@@ -9,9 +10,14 @@ from mpi4py import MPI
 from dedalus.tools.parallel import Sync 
 from dedalus.core.evaluator import FileHandler
 
+from dedalus.tools.config import config
+FILEHANDLER_MODE_DEFAULT = config['analysis'].get('FILEHANDLER_MODE_DEFAULT')
+FILEHANDLER_PARALLEL_DEFAULT = config['analysis'].getboolean('FILEHANDLER_PARALLEL_DEFAULT')
+FILEHANDLER_TOUCH_TMPFILE = config['analysis'].getboolean('FILEHANDLER_TOUCH_TMPFILE')
+
 class d3FileHandler(FileHandler):
 
-    def __init__(self, solver, filename, **kwargs):
+    def __init__(self, solver, filename, keep_file_open=False, **kwargs):
         """ 
         An abstract class for writing to .h5 files, inspired by classic dedalus file handlers
 
@@ -22,13 +28,18 @@ class d3FileHandler(FileHandler):
         self.evaluator = solver.evaluator
         super(d3FileHandler, self).__init__(filename, self.evaluator.dist, self.evaluator.vars, **kwargs)
         self.task_dict = OrderedDict()
+        self.keep_file_open = keep_file_open
+        self.stored_file = None
+        self.local_file = None
+        self.min_process = np.array([self.dist.comm_cart.rank,])
 
         self.evaluator.add_handler(self)
 
-    def add_task(self, op, extra_op=None, **kw):
+    def add_task(self, op, extra_op=None, extra_op_comm=False, **kw):
         super(d3FileHandler, self).add_task(op, **kw)
         task = self.tasks[-1]
         task['extra_op'] = extra_op
+        task['extra_op_comm'] = extra_op_comm
         self.task_dict[task['name']] = task
 
     def setup_file(self, file):
@@ -64,7 +75,8 @@ class d3FileHandler(FileHandler):
             layout = task['layout']
             scales = task['scales']
             extra_op = task['extra_op']
-            gnc_shape, gnc_start, write_shape, write_start, write_count = self.get_write_stats(extra_op, layout, scales, op.domain, op.tensorsig, index=0)
+            extra_op_comm = task['extra_op_comm']
+            gnc_shape, gnc_start, write_shape, write_start, write_count = self.get_write_stats(extra_op, extra_op_comm, layout, scales, op.domain, op.tensorsig, index=0)
             if np.prod(write_shape) <= 1:
                 # Start with shape[0] = 0 to chunk across writes for scalars
                 file_shape = (0,) + tuple(write_shape)
@@ -122,59 +134,84 @@ class d3FileHandler(FileHandler):
     def process(self, world_time=0, wall_time=0, sim_time=0, timestep=0, iteration=0, **kw):
         """ Save task outputs to HDF5 file.
             Largely copied from dedalus/core/evaluator.py, with addition of extra_op logic"""
+        if self.local_file is None:
+            # If there's no data on this file, don't even make a file.
+            for task_num, task in enumerate(self.tasks):
+                out = task['out']
+                extra_op = task['extra_op']
+                extra_op_comm = task['extra_op_comm']
+                out.require_scales(task['scales'])
+                out.require_layout(task['layout'])
+                memory_space, file_space = self.get_hdf5_spaces(extra_op, extra_op_comm, out.layout, task['scales'], out.domain, out.tensorsig, 0)
+                if np.prod(memory_space.shape) != 0:
+                    self.local_file = True
+            if self.local_file is None:
+                self.min_process[0] = self.dist.comm_cart.size
+                self.local_file = False
+            self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.min_process, op=MPI.MIN)
         # HACK: fix world time and timestep inputs from solvers.py/timestepper.py
         file = self.get_file()
-        self.total_write_num += 1
-        self.file_write_num += 1
-        file.attrs['writes'] = self.file_write_num
-        index = self.file_write_num - 1
+        if not self.local_file:
+            self.total_write_num = 0
+            self.file_write_num = 0
+            index = 0
+        else:
+            self.total_write_num += 1
+            self.file_write_num += 1
+            index = self.file_write_num - 1
+            file.attrs['writes'] = self.file_write_num
 
-        # Update time scales
-        sim_time_dset = file['scales/sim_time']
-        world_time_dset = file['scales/world_time']
-        wall_time_dset = file['scales/wall_time']
-        timestep_dset = file['scales/timestep']
-        iteration_dset = file['scales/iteration']
-        write_num_dset = file['scales/write_number']
+            # Update time scales
+            sim_time_dset = file['scales/sim_time']
+            world_time_dset = file['scales/world_time']
+            wall_time_dset = file['scales/wall_time']
+            timestep_dset = file['scales/timestep']
+            iteration_dset = file['scales/iteration']
+            write_num_dset = file['scales/write_number']
 
-        sim_time_dset.resize(index+1, axis=0)
-        sim_time_dset[index] = sim_time
-        world_time_dset.resize(index+1, axis=0)
-        world_time_dset[index] = world_time
-        wall_time_dset.resize(index+1, axis=0)
-        wall_time_dset[index] = wall_time
-        timestep_dset.resize(index+1, axis=0)
-        timestep_dset[index] = timestep
-        iteration_dset.resize(index+1, axis=0)
-        iteration_dset[index] = iteration
-        write_num_dset.resize(index+1, axis=0)
-        write_num_dset[index] = self.total_write_num
-
+            sim_time_dset.resize(index+1, axis=0)
+            sim_time_dset[index] = sim_time
+            world_time_dset.resize(index+1, axis=0)
+            world_time_dset[index] = world_time
+            wall_time_dset.resize(index+1, axis=0)
+            wall_time_dset[index] = wall_time
+            timestep_dset.resize(index+1, axis=0)
+            timestep_dset[index] = timestep
+            iteration_dset.resize(index+1, axis=0)
+            iteration_dset[index] = iteration
+            write_num_dset.resize(index+1, axis=0)
+            write_num_dset[index] = self.total_write_num
         # Create task datasets
         for task_num, task in enumerate(self.tasks):
             out = task['out']
             extra_op = task['extra_op']
+            extra_op_comm = task['extra_op_comm']
             out.require_scales(task['scales'])
             out.require_layout(task['layout'])
+            memory_space, file_space = self.get_hdf5_spaces(extra_op, extra_op_comm, out.layout, task['scales'], out.domain, out.tensorsig, index)
 
-            dset = file['tasks'][task['name']]
-            dset.resize(index+1, axis=0)
+            if self.local_file:
+                dset = file['tasks'][task['name']]
+                dset.resize(index+1, axis=0)
 
-            memory_space, file_space = self.get_hdf5_spaces(extra_op, out.layout, task['scales'], out.domain, out.tensorsig, index)
             if self.parallel:
                 if extra_op is not None:
-                    raise NotImplementedError('extra ops are not impelemented for parallel file outputs')
+                    raise NotImplementedError('extra ops are not implemented for parallel file outputs')
                 dset.id.write(memory_space, file_space, out.data, dxpl=self._property_list)
             else:
                 if extra_op is not None:
-                    out_data = extra_op(out)
+                    out_data = extra_op(out, comm=extra_op_comm)
                 else:
                     out_data = out.data
-                dset.id.write(memory_space, file_space, out_data)
+                if self.local_file:
+                    dset.id.write(memory_space, file_space, out_data)
 
-        file.close()
+        if self.local_file and not self.keep_file_open or self.file_write_num >= self.max_writes:
+            file.close()
+        self.dist.comm_cart.Barrier()
 
-    def get_write_stats(self, extra_op, layout, scales, domain, tensorsig, index):
+
+    def get_write_stats(self, extra_op, extra_op_comm, layout, scales, domain, tensorsig, index):
         """ Determine write parameters for nonconstant subspace of a field.
             Largely copied from dedalus/core/evaluator.py, with addition of extra_op logic"""
 
@@ -184,14 +221,24 @@ class d3FileHandler(FileHandler):
 
         if extra_op is not None:
             gshape = tensor_shape + tuple(extra_op.global_shape)
-            lshape = tensor_shape + tuple(extra_op.local_shape)
             constant = np.array((False,)*tensor_order + tuple(extra_op.constant))
-            start = [0 for i in range(tensor_order)]
-            for elements in extra_op.local_elements:
-                if elements is not None:
-                    start += [elements[0]]
+            if extra_op_comm:
+                if self.dist.comm_cart.rank == 0:
+                    lshape = tensor_shape + tuple(extra_op.global_shape)
                 else:
-                    start += [None,]
+                    lshape = tensor_shape + tuple([0 for s in extra_op.global_shape])
+            else:
+                lshape = tensor_shape + tuple(extra_op.local_shape)
+            start = [0 for i in range(tensor_order)]
+            if extra_op_comm:
+                for i in extra_op.global_shape:
+                    start += [0,]
+            else:
+                for elements in extra_op.local_elements:
+                    if elements is not None:
+                        start += [elements[0]]
+                    else:
+                        start += [None,]
             start = np.array(start)
         else:
             gshape = tensor_shape + layout.global_shape(domain, scales)
@@ -223,7 +270,7 @@ class d3FileHandler(FileHandler):
             write_start = np.zeros(start.shape, dtype=int)
         return global_nc_shape, global_nc_start, write_shape, write_start, write_count
 
-    def get_hdf5_spaces(self, extra_op, layout, scales, domain, tensorsig, index):
+    def get_hdf5_spaces(self, extra_op, extra_op_comm, layout, scales, domain, tensorsig, index):
         """Create HDF5 space objects for writing nonconstant subspace of a field.
             Largely copied from dedalus/core/evaluator.py, with addition of extra_op logic"""
 
@@ -232,19 +279,29 @@ class d3FileHandler(FileHandler):
         tensor_shape = tuple(cs.dim for cs in tensorsig)
         if extra_op is not None:
             constant = np.array((False,)*tensor_order + tuple(extra_op.constant))
-            lshape = tensor_shape + tuple(extra_op.local_shape)
-            start = [0 for i in range(tensor_order)]
-            for elements in extra_op.local_elements:
-                if elements is not None:
-                    start += [elements[0]]
+            if extra_op_comm:
+                if self.dist.comm_cart.rank == 0:
+                    lshape = tensor_shape + tuple(extra_op.global_shape)
                 else:
-                    start += [None,]
+                    lshape = tensor_shape + tuple([0 for s in extra_op.global_shape])
+            else:
+                lshape = tensor_shape + tuple(extra_op.local_shape)
+            start = [0 for i in range(tensor_order)]
+            if extra_op_comm:
+                for i in extra_op.global_shape:
+                    start += [0,]
+            else:
+                for elements in extra_op.local_elements:
+                    if elements is not None:
+                        start += [elements[0]]
+                    else:
+                        start += [None,]
             start = np.array(start)
         else:
             constant = np.array((False,)*tensor_order + domain.constant)
             lshape = tensor_shape + layout.local_shape(domain, scales)
             start = np.array([0 for i in range(tensor_order)] + [elements[0] for elements in layout.local_elements(domain, scales)])
-        gnc_shape, gnc_start, write_shape, write_start, write_count = self.get_write_stats(extra_op, layout, scales, domain, tensorsig, index)
+        gnc_shape, gnc_start, write_shape, write_start, write_count = self.get_write_stats(extra_op, extra_op_comm, layout, scales, domain, tensorsig, index)
 
         # Build HDF5 spaces
         memory_shape = tuple(lshape)
@@ -260,3 +317,85 @@ class d3FileHandler(FileHandler):
         file_space.select_hyperslab(file_start, file_count)
 
         return memory_space, file_space
+
+    def check_file_limits(self):
+        """Check if write or size limits have been reached."""
+        write_limit = (self.file_write_num >= self.max_writes)
+        size_limit = (self.current_path.stat().st_size >= self.max_size)
+        if not self.parallel:
+            # reduce(size_limit, or) across processes
+            comm = self.dist.comm_cart
+            self._sl_array[0] = size_limit
+            comm.Barrier()
+            comm.Allreduce(MPI.IN_PLACE, self._sl_array, op=MPI.LOR)
+            size_limit = self._sl_array[0]
+        return (write_limit or size_limit)
+
+    def get_file(self):
+        """Return current HDF5 file, creating if necessary."""
+        # Create new file if necessary
+        if os.path.exists(str(self.current_path)):
+            if self.check_file_limits():
+                self.set_num += 1
+                self.create_current_file()
+        else:
+            self.create_current_file()
+        if self.local_file:
+            # Open current file
+            if not self.keep_file_open or self.stored_file is None:
+                if self.parallel:
+                    comm = self.dist.comm_cart
+                    h5file = h5py.File(str(self.current_path), 'r+', driver='mpio', comm=comm)
+                else:
+                    h5file = h5py.File(str(self.current_path), 'r+')
+                self.file_write_num = h5file['/scales/write_number'].shape[0]
+                if self.keep_file_open:
+                    self.stored_file = h5file
+                return h5file
+            else:
+                return self.stored_file
+        else:
+            return None
+
+    def create_current_file(self):
+        """Generate new HDF5 file in current_path."""
+        self.stored_file = None
+        self.file_write_num = 0
+        comm = self.dist.comm_cart
+        if self.parallel:
+            file = h5py.File(str(self.current_path), 'w-', driver='mpio', comm=comm)
+        else:
+            # Create set folder
+            with Sync(comm):
+                if comm.rank == 0:
+                    self.current_path.parent.mkdir()
+            if self.local_file:
+                if FILEHANDLER_TOUCH_TMPFILE:
+                    tmpfile = self.base_path.joinpath('tmpfile_p%i' %(comm.rank))
+                    tmpfile.touch()
+                file = h5py.File(str(self.current_path), 'w-')
+                if FILEHANDLER_TOUCH_TMPFILE:
+                    tmpfile.unlink()
+        if self.local_file:
+            self.setup_file(file)
+            file.close()
+
+    @property
+    def current_path(self):
+        comm = self.dist.comm_cart
+        set_num = self.set_num
+        if self.parallel:
+            # Save in base directory
+            file_name = '%s_s%i.hdf5' %(self.base_path.stem, set_num)
+            return self.base_path.joinpath(file_name)
+        else:
+            # Save in folders for each filenum in base directory
+            folder_name = '%s_s%i' %(self.base_path.stem, set_num)
+            folder_path = self.base_path.joinpath(folder_name)
+            if self.local_file:
+                file_name = '%s_s%i_p%i.h5' %(self.base_path.stem, set_num, comm.rank)
+            else:
+                file_name = '%s_s%i_p%i.h5' %(self.base_path.stem, set_num, self.min_process[0])
+            return folder_path.joinpath(file_name)
+
+

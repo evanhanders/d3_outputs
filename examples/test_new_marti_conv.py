@@ -140,6 +140,6 @@ end_time = time.time()
 print('Run time:', end_time-start_time)
 print('mering data')
 
-from d3_outputs import file_merging
+from d3_outputs import post
 for t in analysis_tasks:
-    file_merging.merge_analysis(t.base_path)
+    post.merge_analysis(t.base_path)
