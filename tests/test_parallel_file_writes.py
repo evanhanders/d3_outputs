@@ -1,3 +1,6 @@
+"""
+Unit tets which ensure that output operations properly write to file in parallel.
+"""
 import pytest
 import numpy as np
 import functools
@@ -17,19 +20,6 @@ def make_ball_basis(Nmax, Lmax, radius, dtype=np.float64, dealias=1, mesh=None):
     b    = basis.BallBasis(c, (2*(Lmax+2), Lmax+1, Nmax+1), radius=radius, dtype=dtype)
     φ,  θ,  r  = b.local_grids((dealias, dealias, dealias))
     return c, d, b, φ, θ, r
-
-def make_shell_basis(Nmax, Lmax, r_inner, r_outer, dtype=np.float64, dealias=1):
-    c    = coords.SphericalCoordinates('φ', 'θ', 'r')
-    d    = distributor.Distributor((c,), mesh=None)
-    b    = basis.SphericalShellBasis(c, (2*(Lmax+2), Lmax+1, Nmax+1), radii=(r_inner, r_outer), dtype=dtype)
-    φ,  θ,  r  = b.local_grids((dealias, dealias, dealias))
-    return c, d, b, φ, θ, r
-
-def make_ballShell_basis(NmaxB, NmaxS, Lmax, r_inner, r_outer, dtype=np.float64, dealias=1):
-    c, d, bB, φB, θB, rB = make_ball_basis(NmaxB, Lmax, r_inner, dtype=dtype, dealias=dealias)
-    bS   = basis.SphericalShellBasis(c, (2*(Lmax+2), Lmax+1, NmaxS+1), radii=(r_inner, r_outer), dtype=dtype)
-    φS,  θS,  rS  = bS.local_grids((dealias, dealias, dealias))
-    return c, d, bB, bS, φB, θB, rB, φS, θS, rS
 
 def create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=False):
     c, d, b, φ, θ, r = make_ball_basis(Nmax, Lmax, radius, dtype=dtype, mesh=mesh)

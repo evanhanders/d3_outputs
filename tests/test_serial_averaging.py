@@ -1,3 +1,6 @@
+"""
+Unit tests which ensure that d3_outputs operations work in serial.
+"""
 import pytest
 import numpy as np
 import functools
@@ -27,19 +30,6 @@ def make_ballShell_basis(NmaxB, NmaxS, Lmax, r_inner, r_outer, dtype=np.float64,
     bS   = basis.SphericalShellBasis(c, (2*(Lmax+2), Lmax+1, NmaxS+1), radii=(r_inner, r_outer), dtype=dtype)
     φS,  θS,  rS  = bS.local_grids((dealias, dealias, dealias))
     return c, d, bB, bS, φB, θB, rB, φS, θS, rS
-
-#Operators
-#div       = lambda A: operators.Divergence(A, index=0)
-#lap       = lambda A: operators.Laplacian(A, c)
-#grad      = lambda A: operators.Gradient(A, c)
-#dot       = lambda A, B: arithmetic.DotProduct(A, B)
-#curl      = lambda A: operators.Curl(A)
-#cross     = lambda A, B: arithmetic.CrossProduct(A, B)
-#trace     = lambda A: operators.Trace(A)
-#ddt       = lambda A: operators.TimeDerivative(A)
-#transpose = lambda A: operators.TransposeComponents(A)
-#radComp   = lambda A: operators.RadialComponent(A)
-#angComp   = lambda A, index=1: operators.AngularComponent(A, index=index)
 
 @pytest.mark.parametrize('dtype', [np.float64])
 @pytest.mark.parametrize('Nmax', [15])
@@ -157,3 +147,22 @@ def test_shell_phi_theta_average(Nmax, Lmax, r_inner, r_outer, dtype):
     op_avg      = averager(f, comm=True)
     true_avg = r**2 * (1/2)
     assert np.allclose(true_avg, op_avg)
+
+@pytest.mark.parametrize('dtype', [np.float64])
+@pytest.mark.parametrize('Nmax', [15])
+@pytest.mark.parametrize('Lmax', [14])
+@pytest.mark.parametrize('radius', [1, 2])
+def test_ball_S2_outputter(Nmax, Lmax, radius, dtype):
+    c, d, b, φ, θ, r = make_ball_basis(Nmax, Lmax, radius, dtype=dtype)
+    f = field.Field(dist=d, bases=(b,), dtype=dtype)
+    interp_op = f(r=0.5*radius)
+    averager = averaging.OutputRadialInterpolate(f, interp_op)
+    f['g'] = r**2 * np.sin(φ)*np.cos(θ)
+    op_avg      = averager(interp_op.evaluate(), comm=True)
+    true_avg    = interp_op.evaluate()['g']
+    assert np.allclose(true_avg, op_avg)
+    f['g'] = r**2 * np.sin(φ)**2 * 3 * np.cos(θ)**2
+    op_avg      = averager(interp_op.evaluate(), comm=True)
+    true_avg = interp_op.evaluate()['g']
+    assert np.allclose(true_avg, op_avg)
+
