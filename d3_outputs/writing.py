@@ -20,13 +20,13 @@ class d3FileHandler(FileHandler):
                 The dedalus solver used for the IVP
         """
         self.evaluator = solver.evaluator
-        super(betterd3FileHandler, self).__init__(filename, self.evaluator.dist, self.evaluator.vars, **kwargs)
+        super(d3FileHandler, self).__init__(filename, self.evaluator.dist, self.evaluator.vars, **kwargs)
         self.task_dict = OrderedDict()
 
         self.evaluator.add_handler(self)
 
     def add_task(self, op, extra_op=None, **kw):
-        super(betterd3FileHandler, self).add_task(op, **kw)
+        super(d3FileHandler, self).add_task(op, **kw)
         task = self.tasks[-1]
         task['extra_op'] = extra_op
         self.task_dict[task['name']] = task

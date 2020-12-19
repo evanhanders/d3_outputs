@@ -10,7 +10,7 @@ from dedalus.tools import logging
 from dedalus.tools.parsing import split_equation
 from dedalus.extras.flow_tools import GlobalArrayReducer
 import d3_outputs.averaging as averaging
-from d3_outputs.writing import betterd3FileHandler
+from d3_outputs.writing import d3FileHandler
 from d3_outputs import file_merging
 import h5py
 
@@ -68,7 +68,7 @@ def test_ball_volume_average(Nmax, Lmax, radius, dtype, mesh, vector):
     c, b, d, φ, θ, r, x, y, z, sim_f, solver = create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=vector)
     #Define averager and output tasks
     vol_averager = averaging.BallVolumeAverager(sim_f)
-    outputs = betterd3FileHandler(solver, './testing/', iter=1, max_writes=np.inf)
+    outputs = d3FileHandler(solver, './testing/', iter=1, max_writes=np.inf)
     outputs.add_task(sim_f, extra_op=vol_averager, name='sim_f', layout='g')
     #Store outputs as the sim timesteps
     times = []
@@ -100,7 +100,7 @@ def test_ball_phi_average(Nmax, Lmax, radius, dtype, mesh, vector):
     c, b, d, φ, θ, r, x, y, z, sim_f, solver = create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=vector)
     #Define averager and output tasks
     phi_averager = averaging.PhiAverager(sim_f)
-    outputs = betterd3FileHandler(solver, './testing/', iter=1, max_writes=np.inf)
+    outputs = d3FileHandler(solver, './testing/', iter=1, max_writes=np.inf)
     outputs.add_task(sim_f, extra_op=phi_averager, name='sim_f', layout='g')
     #Store outputs as the sim timesteps
     times = []
@@ -132,7 +132,7 @@ def test_ball_phitheta_average(Nmax, Lmax, radius, dtype, mesh, vector):
     c, b, d, φ, θ, r, x, y, z, sim_f, solver = create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=vector)
     #Define averager and output tasks
     phitheta_averager = averaging.PhiThetaAverager(sim_f)
-    outputs = betterd3FileHandler(solver, './testing/', iter=1, max_writes=np.inf)
+    outputs = d3FileHandler(solver, './testing/', iter=1, max_writes=np.inf)
     outputs.add_task(sim_f, extra_op=phitheta_averager, name='sim_f', layout='g')
     #Store outputs as the sim timesteps
     times = []
@@ -164,7 +164,7 @@ def test_ball_equator_slicer(Nmax, Lmax, radius, dtype, mesh, vector):
     c, b, d, φ, θ, r, x, y, z, sim_f, solver = create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=vector)
     #Define averager and output tasks
     equator_slicer = averaging.EquatorSlicer(sim_f)
-    outputs = betterd3FileHandler(solver, './testing/', iter=1, max_writes=np.inf)
+    outputs = d3FileHandler(solver, './testing/', iter=1, max_writes=np.inf)
     outputs.add_task(sim_f, extra_op=equator_slicer, name='sim_f', layout='g')
     #Store outputs as the sim timesteps
     times = []
@@ -197,7 +197,7 @@ def test_ball_shell_slicer(Nmax, Lmax, radius, dtype, mesh, vector):
     #Define averager and output tasks
     interp_operation = sim_f(r=0.5*radius)
     shell_slicer = averaging.OutputRadialInterpolate(sim_f, interp_operation)
-    outputs = betterd3FileHandler(solver, './testing/', iter=1, max_writes=np.inf)
+    outputs = d3FileHandler(solver, './testing/', iter=1, max_writes=np.inf)
     outputs.add_task(interp_operation, extra_op=shell_slicer, name='sim_f', layout='g')
     #Store outputs as the sim timesteps
     times = []

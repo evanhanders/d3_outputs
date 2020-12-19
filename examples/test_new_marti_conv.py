@@ -22,11 +22,11 @@ Lmax = 15
 L_dealias = 1
 Nmax = 15
 N_dealias = 1
-dt = 8e-5
-t_end = 0.01
-ts = timesteppers.SBDF2
+dt = 1.5e-4
+t_end = 1
+ts = timesteppers.SBDF4
 dtype = np.float64
-mesh = [2,2]
+mesh = [4,4]
 
 Ekman = 3e-4
 Rayleigh = 95
@@ -97,25 +97,25 @@ solver.stop_sim_time = t_end
 
 # Analysis
 from d3_outputs.averaging    import BallVolumeAverager, PhiAverager, PhiThetaAverager, EquatorSlicer, OutputRadialInterpolate
-from d3_outputs.writing      import d3FileHandler, betterd3FileHandler
+from d3_outputs.writing      import d3FileHandler
 output_dir = './'
 vol_averager       = BallVolumeAverager(p)
 azimuthal_averager = PhiAverager(p)
 radialProfile_averager = PhiThetaAverager(p)
 eq_slicer = EquatorSlicer(p)
 
-scalars = betterd3FileHandler(solver, '{:s}/scalar'.format(output_dir), max_writes=np.inf, iter=10)
+scalars = d3FileHandler(solver, '{:s}/scalar'.format(output_dir), max_writes=np.inf, iter=10)
 scalars.add_task(0.5*dot(u, u), extra_op=vol_averager, name='KE', layout='g')
 
-equatorial = betterd3FileHandler(solver, '{:s}/eq_slice'.format(output_dir), max_writes=40, sim_dt=0.05)
-meridional = betterd3FileHandler(solver, '{:s}/mer_slice'.format(output_dir), max_writes=40, sim_dt=0.05)
-profile    = betterd3FileHandler(solver, '{:s}/profiles'.format(output_dir), max_writes=40, sim_dt=0.05)
+equatorial = d3FileHandler(solver, '{:s}/eq_slice'.format(output_dir), max_writes=40, sim_dt=0.05)
+meridional = d3FileHandler(solver, '{:s}/mer_slice'.format(output_dir), max_writes=40, sim_dt=0.05)
+profile    = d3FileHandler(solver, '{:s}/profiles'.format(output_dir), max_writes=40, sim_dt=0.05)
 for handler, op in zip([equatorial, meridional, profile], [eq_slicer, azimuthal_averager, radialProfile_averager]):
     handler.add_task(T, extra_op=op, name='T', layout='g')
     handler.add_task(dot(ez, curl(u)), extra_op=op, name='z_vort', layout='g')
     handler.add_task(u, extra_op=op, name='u', layout='g')
 
-shell = betterd3FileHandler(solver, '{:s}/shell_slice'.format(output_dir), max_writes=40, sim_dt=0.05)
+shell = d3FileHandler(solver, '{:s}/shell_slice'.format(output_dir), max_writes=40, sim_dt=0.05)
 shell.add_task(T(r=0.95), extra_op=OutputRadialInterpolate(T, T(r=0.95)), name='T_r0.95', layout='g')
 shell.add_task(dot(ez, curl(u))(r=0.95), extra_op=OutputRadialInterpolate(T, dot(ez, curl(u))(r=0.95)), name='z_vort_r0.95', layout='g')
 shell.add_task(angComp(u(r=0.95)), extra_op=OutputRadialInterpolate(T, angComp(u(r=0.95))), name='u_S2', layout='g')
