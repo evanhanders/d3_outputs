@@ -169,3 +169,38 @@ def test_ball_S2_outputter(Nmax, Lmax, radius, dtype, mesh):
         op_outs.append(op_avg)
     assert np.allclose(op_outs[0], op_outs[1])
 
+@pytest.mark.parametrize('dtype', [np.float64])
+@pytest.mark.parametrize('Nmax', [15])
+@pytest.mark.parametrize('Lmax', [14])
+@pytest.mark.parametrize('radius', [1, 2])
+@pytest.mark.parametrize('mesh', [[2,2], [1,4], [4,1]])
+def test_ball_equator_slice(Nmax, Lmax, radius, dtype, mesh):
+    op_outs = []
+    for this_mesh, comm in zip((mesh, None), (MPI.COMM_WORLD, MPI.COMM_SELF)):
+        c, d, b, φ, θ, r = make_ball_basis(Nmax, Lmax, radius, dtype=dtype, mesh=this_mesh, comm=comm)
+        f = field.Field(dist=d, bases=(b,), dtype=dtype)
+        slicer = extra_ops.EquatorSlicer(f)
+        f['g'] = r**2 * np.sin(φ)**2 * 3 * (1 - np.cos(θ)**2)
+        op_avg      = slicer(f, comm=True)
+        op_outs.append(op_avg)
+    assert np.allclose(op_outs[0], op_outs[1])
+
+@pytest.mark.parametrize('dtype', [np.float64])
+@pytest.mark.parametrize('Nmax', [15])
+@pytest.mark.parametrize('Lmax', [14])
+@pytest.mark.parametrize('radius', [1, 2])
+@pytest.mark.parametrize('mesh', [[2,2], [1,4], [4,1]])
+def test_ball_meridion_slice(Nmax, Lmax, radius, dtype, mesh):
+    op_outs = []
+    for this_mesh, comm in zip((mesh, None), (MPI.COMM_WORLD, MPI.COMM_SELF)):
+        c, d, b, φ, θ, r = make_ball_basis(Nmax, Lmax, radius, dtype=dtype, mesh=this_mesh, comm=comm)
+        f = field.Field(dist=d, bases=(b,), dtype=dtype)
+        f['g'] = 3 * r**2 * np.sin(φ)**2 * (1 - np.cos(θ)**2)
+        these_op_outs = []
+        for phi_target in [0, np.pi/2, np.pi, 3*np.pi/2]:
+            slicer = extra_ops.MeridionSlicer(f, phi_target=phi_target)
+            op_slice      = slicer(f, comm=True)
+            these_op_outs.append(op_slice)
+        op_outs.append(these_op_outs)
+    for i in range(len(op_outs[0])):
+        assert np.allclose(op_outs[0][i], op_outs[1][i])

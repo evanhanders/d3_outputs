@@ -166,3 +166,29 @@ def test_ball_S2_outputter(Nmax, Lmax, radius, dtype):
     true_avg = interp_op.evaluate()['g']
     assert np.allclose(true_avg, op_avg)
 
+@pytest.mark.parametrize('dtype', [np.float64])
+@pytest.mark.parametrize('Nmax', [15])
+@pytest.mark.parametrize('Lmax', [14])
+@pytest.mark.parametrize('radius', [1, 2])
+def test_ball_equator_slice(Nmax, Lmax, radius, dtype):
+    c, d, b, φ, θ, r = make_ball_basis(Nmax, Lmax, radius, dtype=dtype)
+    f = field.Field(dist=d, bases=(b,), dtype=dtype)
+    f['g'] = 3 * r**2 * np.sin(φ)**2 * (1 - np.cos(θ)**2)
+    slicer = extra_ops.EquatorSlicer(f)
+    op_slice      = slicer(f, comm=True)
+    true_slice = 3 * r**2 * np.sin(φ)**2
+    assert np.allclose(true_slice, op_slice)
+
+@pytest.mark.parametrize('dtype', [np.float64])
+@pytest.mark.parametrize('Nmax', [15])
+@pytest.mark.parametrize('Lmax', [14])
+@pytest.mark.parametrize('radius', [1, 2])
+def test_ball_meridion_slice(Nmax, Lmax, radius, dtype):
+    c, d, b, φ, θ, r = make_ball_basis(Nmax, Lmax, radius, dtype=dtype)
+    f = field.Field(dist=d, bases=(b,), dtype=dtype)
+    f['g'] = 3 * r**2 * np.sin(φ)**2 * (1 - np.cos(θ)**2)
+    for phi_target in [0, np.pi/2, np.pi, 3*np.pi/2]:
+        slicer = extra_ops.MeridionSlicer(f, phi_target=phi_target)
+        op_slice      = slicer(f, comm=True)
+        true_slice = 3 * r**2 * np.sin(phi_target)**2 * (1 - np.cos(θ)**2)
+        assert np.allclose(true_slice, op_slice)

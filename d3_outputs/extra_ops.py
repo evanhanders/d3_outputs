@@ -280,12 +280,109 @@ class BallShellVolumeAverager:
         return avg
 
 
-class EquatorSlicer(OutputTask):
+class OutputSlicer(OutputTask):
     """
-    A class which slices out an array at the equator.
+    An abstract class which slices out an array from a simulation
     """
 
     task_type = 'slice'
+
+    def allocate_memory(self):
+        self.local_equator = np.zeros(self.local_shape)
+        self.local_t_equator = np.zeros([3,] + self.local_shape)
+        self.global_equator = np.zeros(self.global_shape)
+        self.global_t_equator = np.zeros([3,] + self.global_shape)
+
+    def return_field(self, fd, comm):
+        """ Returns either the local or global portion of the output task """
+        if not comm:
+            if len(fd.tensorsig) == 1:
+                return self.local_t_equator
+            elif len(fd.tensorsig) == 0:
+                return self.local_equator
+            
+        if 0 in self.local_shape:
+            if len(fd.tensorsig) == 1:
+                self.global_t_equator[:] = 0
+            elif len(fd.tensorsig) == 0:
+                self.global_equator[:] = 0
+        else:
+            if len(fd.tensorsig) == 1:
+                self.global_t_equator[:] = 0
+                self.global_t_equator[(slice(0,3,1),)+self.local_slices] = self.local_t_equator
+            elif len(fd.tensorsig) == 0:
+                self.global_equator[:] = 0
+                self.global_equator[self.local_slices] = self.local_equator
+
+        if len(fd.tensorsig) == 1:
+            self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.global_t_equator, op=MPI.SUM)
+            return self.global_t_equator
+        elif len(fd.tensorsig) == 0:
+            self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.global_equator, op=MPI.SUM)
+            return self.global_equator
+
+
+class MeridionSlicer(OutputSlicer):
+    """
+    A class which slices out an array in a meridional slice
+    """
+
+    def __init__(self, field, phi_target=0):
+        """
+        Initialize the slice plotter.
+
+        # Arguments
+            field (Field) :
+                A field used to figure out integral weights, basis, etc.
+            phi_target (float, optional) :
+                The value of azimuth (in radians) to take the meridional slice
+        """
+        if phi_target > 2*np.pi or phi_target < 0:
+            raise ValueError("Phi target must be between 0 and 2pi")
+        super(MeridionSlicer, self).__init__(field)
+        φg    = self.basis.global_grid_azimuth(self.dealias[0])
+        φl    = self.basis.local_grid_azimuth(self.dealias[0])
+        if phi_target in φl:
+            self.i_φ = np.argmin(np.abs(φl[:,0,0] - phi_target))
+            self.local_shape = [1, self.local_shape[1], self.local_shape[2]]
+            self.local_elements = [np.zeros(1, dtype=int), self.local_elements[1], self.local_elements[2]]
+            self.local_slices   = (slice(0,1,1), self.local_slices[1], self.local_slices[2])
+        else:
+            self.i_φ = None
+            self.local_shape = [0, self.local_shape[1], self.local_shape[2]]
+            self.local_elements = [None, self.local_elements[1], self.local_elements[2]]
+            self.local_slices   = (None, self.local_slices[1], self.local_slices[2])
+        self.global_shape = [1, self.global_shape[1], self.global_shape[2]]
+        self.constant = (True, self.constant[0], self.constant[2])
+
+        self.allocate_memory()
+
+    def __call__(self, fd, comm=False):
+        """ Communicate local plot data globally """
+        arr = fd['g']
+        if self.local_elements[0] is None:
+            if len(fd.tensorsig) == 1:
+                self.local_t_equator[:] = 0
+            elif len(fd.tensorsig) == 0:
+                self.local_t_equator[:] = 0
+            else:
+                raise NotImplementedError("Only scalars and tensors are implemented")
+        else:
+            if len(fd.tensorsig) == 1:
+                self.local_t_equator[:] = arr[:,self.i_φ,:,:].real.reshape(self.local_t_equator.shape)
+            elif len(fd.tensorsig) == 0:
+                self.local_equator[:] = arr[self.i_φ,:,:].real.reshape(self.local_equator.shape)
+            else:
+                raise NotImplementedError("Only scalars and tensors are implemented")
+
+        return self.return_field(fd, comm)
+
+
+
+class EquatorSlicer(OutputSlicer):
+    """
+    A class which slices out an array at the equator.
+    """
 
     def __init__(self, field):
         """
@@ -312,10 +409,7 @@ class EquatorSlicer(OutputTask):
         self.global_shape = [self.global_shape[0], 1, self.global_shape[2]]
         self.constant = (self.constant[0], True, self.constant[2])
 
-        self.local_equator = np.zeros(self.local_shape)
-        self.local_t_equator = np.zeros([3,] + self.local_shape)
-        self.global_equator = np.zeros(self.global_shape)
-        self.global_t_equator = np.zeros([3,] + self.global_shape)
+        self.allocate_memory()
 
     def __call__(self, fd, comm=False):
         """ Communicate local plot data globally """
@@ -335,31 +429,8 @@ class EquatorSlicer(OutputTask):
             else:
                 raise NotImplementedError("Only scalars and tensors are implemented")
 
-        if not comm:
-            if len(fd.tensorsig) == 1:
-                return self.local_t_equator
-            elif len(fd.tensorsig) == 0:
-                return self.local_equator
-            
-        if self.local_elements[1] is None:
-            if len(fd.tensorsig) == 1:
-                self.global_t_equator[:] = 0
-            elif len(fd.tensorsig) == 0:
-                self.global_equator[:] = 0
-        else:
-            if len(fd.tensorsig) == 1:
-                self.global_t_equator[:] = 0
-                self.global_t_equator[(slice(0,3,1),)+self.local_slices] = self.local_t_equator
-            elif len(fd.tensorsig) == 0:
-                self.global_equator[:] = 0
-                self.global_equator[self.local_slices] = self.local_equator
+        return self.return_field(fd, comm)
 
-        if len(fd.tensorsig) == 1:
-            self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.global_t_equator, op=MPI.SUM)
-            return self.global_t_equator
-        elif len(fd.tensorsig) == 0:
-            self.dist.comm_cart.Allreduce(MPI.IN_PLACE, self.global_equator, op=MPI.SUM)
-            return self.global_equator
 
 class OutputRadialInterpolate(OutputTask):
 

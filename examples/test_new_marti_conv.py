@@ -26,7 +26,16 @@ dt = 1.5e-4
 t_end = 1
 ts = timesteppers.SBDF4
 dtype = np.float64
-mesh = [4,4]
+
+comm = MPI.COMM_WORLD
+rank = comm.rank
+ncpu = comm.size
+log2 = np.log2(ncpu)
+if log2 == int(log2):
+    mesh = [int(2**np.ceil(log2/2)),int(2**np.floor(log2/2))]
+else:
+    mesh = None
+logger.info("running on processor mesh={}".format(mesh))
 
 Ekman = 3e-4
 Rayleigh = 95
@@ -96,13 +105,15 @@ solver = solvers.InitialValueSolver(problem, ts)
 solver.stop_sim_time = t_end
 
 # Analysis
-from d3_outputs.extra_ops    import BallVolumeAverager, PhiAverager, PhiThetaAverager, EquatorSlicer, OutputRadialInterpolate
+from d3_outputs import extra_ops
 from d3_outputs.writing      import d3FileHandler
 output_dir = './'
-vol_averager       = BallVolumeAverager(p)
-azimuthal_averager = PhiAverager(p)
-radialProfile_averager = PhiThetaAverager(p)
-eq_slicer = EquatorSlicer(p)
+vol_averager       = extra_ops.BallVolumeAverager(p)
+azimuthal_averager = extra_ops.PhiAverager(p)
+radialProfile_averager = extra_ops.PhiThetaAverager(p)
+eq_slicer = extra_ops.EquatorSlicer(p)
+mer_slicer1 = extra_ops.MeridionSlicer(p, phi_target=0)
+mer_slicer2 = extra_ops.MeridionSlicer(p, phi_target=np.pi)
 
 scalars = d3FileHandler(solver, '{:s}/scalar'.format(output_dir), max_writes=np.inf, iter=10)
 scalars.add_task(0.5*dot(u, u), extra_op=vol_averager, name='KE', layout='g', extra_op_comm=True) #extra_op_comm=True so we only write one scalar file rather than Ncpu files
@@ -114,12 +125,19 @@ for handler, op, op_comm in zip([equatorial, meridional, profile], [eq_slicer, a
     handler.add_task(T, extra_op=op, name='T', layout='g', extra_op_comm=op_comm)
     handler.add_task(dot(ez, curl(u)), extra_op=op, name='z_vort', layout='g', extra_op_comm=op_comm)
     handler.add_task(u, extra_op=op, name='u', layout='g', extra_op_comm=op_comm)
+meridional.add_task(T, extra_op=mer_slicer1, name='T(φ=0)', layout='g', extra_op_comm=False)
+meridional.add_task(T, extra_op=mer_slicer2, name='T(φ=pi)', layout='g', extra_op_comm=False)
+meridional.add_task(u, extra_op=mer_slicer1, name='u(φ=0)', layout='g', extra_op_comm=False)
+meridional.add_task(u, extra_op=mer_slicer2, name='u(φ=pi)', layout='g', extra_op_comm=False)
+meridional.add_task(dot(ez, curl(u)), extra_op=mer_slicer1, name='z_vort(φ=0)', layout='g', extra_op_comm=False)
+meridional.add_task(dot(ez, curl(u)), extra_op=mer_slicer2, name='z_vort(φ=pi)', layout='g', extra_op_comm=False)
 
+ORI = extra_ops.OutputRadialInterpolate
 shell = d3FileHandler(solver, '{:s}/shell_slice'.format(output_dir), max_writes=40, sim_dt=0.05)
-shell.add_task(T(r=0.95), extra_op=OutputRadialInterpolate(T, T(r=0.95)), name='T_r0.95', layout='g')
-shell.add_task(dot(ez, curl(u))(r=0.95), extra_op=OutputRadialInterpolate(T, dot(ez, curl(u))(r=0.95)), name='z_vort_r0.95', layout='g')
-shell.add_task(angComp(u(r=0.95)), extra_op=OutputRadialInterpolate(T, angComp(u(r=0.95))), name='u_S2', layout='g')
-shell.add_task(u(r=0.95), extra_op=OutputRadialInterpolate(T, u(r=0.95)), name='u_vector', layout='g')
+shell.add_task(T(r=0.95), extra_op=ORI(T, T(r=0.95)), name='T_r0.95', layout='g')
+shell.add_task(dot(ez, curl(u))(r=0.95), extra_op=ORI(T, dot(ez, curl(u))(r=0.95)), name='z_vort_r0.95', layout='g')
+shell.add_task(angComp(u(r=0.95)), extra_op=ORI(T, angComp(u(r=0.95))), name='u_S2', layout='g')
+shell.add_task(u(r=0.95), extra_op=ORI(T, u(r=0.95)), name='u_vector', layout='g')
 
 checkpoint = solver.evaluator.add_file_handler('{:s}/checkpoint'.format(output_dir), max_writes=2, iter=1000)
 #checkpoint = solver.evaluator.add_file_handler('{:s}/checkpoint'.format(output_dir), max_writes=2, sim_dt=50*t_buoy)
