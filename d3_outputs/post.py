@@ -1,6 +1,7 @@
 """
 Logic for merging files from dedalus simulations from d3_outputs; largely copied from dedalus/tools/post.py
 """
+import glob
 import pathlib
 import h5py
 import numpy as np
@@ -39,7 +40,7 @@ def merge_distributed_set(set_path, cleanup=False):
     # Create joint file, overwriting if it already exists
     with h5py.File(str(joint_path), mode='w') as joint_file:
         # Setup joint file based on first process file (arbitrary)
-        merge_setup(joint_file, proc_paths[0])
+        merge_setup(joint_file, proc_paths)
         # Merge data from all process files
         for proc_path in proc_paths:
             merge_data(joint_file, proc_path)
@@ -50,7 +51,7 @@ def merge_distributed_set(set_path, cleanup=False):
         set_path.rmdir()
 
 
-def merge_setup(joint_file, proc_path):
+def merge_setup(joint_file, proc_paths):
     """
     Merge HDF5 setup from part of a distributed analysis set into a joint file.
 
@@ -62,6 +63,7 @@ def merge_setup(joint_file, proc_path):
         Path to part of a distributed analysis set
 
     """
+    proc_path = proc_paths[0]
     proc_path = pathlib.Path(proc_path)
     logger.info("Merging setup from {}".format(proc_path))
 
@@ -81,6 +83,7 @@ def merge_setup(joint_file, proc_path):
         # Tasks
         joint_tasks = joint_file.create_group('tasks')
         proc_tasks = proc_file['tasks']
+
         for taskname in proc_tasks:
             # Setup dataset with automatic chunking
             proc_dset = proc_tasks[taskname]
@@ -96,13 +99,53 @@ def merge_setup(joint_file, proc_path):
             joint_dset.attrs['constant'] = proc_dset.attrs['constant']
             joint_dset.attrs['grid_space'] = proc_dset.attrs['grid_space']
             joint_dset.attrs['scales'] = proc_dset.attrs['scales']
-            # Dimension scales
-            for i, proc_dim in enumerate(proc_dset.dims):
-                joint_dset.dims[i].label = proc_dim.label
-#                for scalename in proc_dim:
-#                    scale = joint_file['scales'][scalename]
-#                    joint_dset.dims.create_scale(scale, scalename)
-#                    joint_dset.dims[i].attach_scale(scale)
+
+    #Construct basis grids; this is messy, need to clean it up, but it works for now.
+    dimensions_made = []
+    for f in proc_paths:
+        with h5py.File(pathlib.Path(f), 'r') as piece_file:
+            proc_tasks = piece_file['tasks']
+            true_shape = np.inf
+            for taskname in proc_tasks:
+                proc_dset = proc_tasks[taskname]
+                spatial_shape = proc_dset.attrs['global_shape']
+                if len(spatial_shape) < true_shape:
+                    true_shape = len(spatial_shape)
+                continue
+            for taskname in proc_tasks:
+                proc_dset = proc_tasks[taskname]
+                spatial_shape = proc_dset.attrs['global_shape']
+                # Dimension scales
+                start = proc_dset.attrs['start']
+                count = proc_dset.attrs['count']
+                constant = proc_dset.attrs['constant']
+                baseline = len(proc_dset.dims) - true_shape 
+                for i, proc_dim in enumerate(proc_dset.dims):
+                    if len(proc_dim.values()) == 0:
+                        continue
+                    label = proc_dim.label
+                    values = proc_dim.values()[0][()]
+                    dimension = proc_dim._dimension
+                    if spatial_shape[dimension-baseline] > 1 and dimension > 0 and np.prod(count[1:]) > 1:
+                        shape = [1]*true_shape
+                        shape[dimension-baseline] = spatial_shape[dimension-baseline]
+                        local_shape = np.copy(shape)
+                        local_shape[dimension-baseline] = count[dimension-baseline]
+                        if dimension not in dimensions_made:
+                            joint_file['scales/{}/1.0'.format(label)] = np.zeros(shape)
+                            dimensions_made.append(dimension)
+                        slices = []
+                        skip = False
+                        for k in range(len(start) - (baseline-1)): #don't care about tensor parts
+                            j = baseline-1 + k
+                            if shape[k] == 1:
+                                slices.append(slice(0,1,1))
+                            else:  
+                                if len(values) != count[j]: skip = True
+                                slices.append(slice(start[j],start[j]+count[j],1))
+                        if skip: continue
+                        joint_file['scales/{}/1.0'.format(label)][slices[0], slices[1], slices[2]] = values.squeeze().reshape(local_shape)
+
 
 
 def merge_data(joint_file, proc_path):
