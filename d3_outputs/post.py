@@ -101,7 +101,7 @@ def merge_setup(joint_file, proc_paths):
             joint_dset.attrs['scales'] = proc_dset.attrs['scales']
 
     #Construct basis grids; this is messy, need to clean it up, but it works for now.
-    dimensions_made = []
+    axes_made = []
     for f in proc_paths:
         with h5py.File(pathlib.Path(f), 'r') as piece_file:
             proc_tasks = piece_file['tasks']
@@ -126,25 +126,29 @@ def merge_setup(joint_file, proc_paths):
                     label = proc_dim.label
                     values = proc_dim.values()[0][()]
                     dimension = proc_dim._dimension
-                    if spatial_shape[dimension-baseline] > 1 and dimension > 0 and np.prod(count[1:]) > 1:
+                    axis = dimension-baseline
+                    if axis < 0: continue
+                    if spatial_shape[axis] > 1 and np.prod(count[1:]) > 1:
+                        #The baseline-1: logic allows for arbitrary rank vectors
                         shape = [1]*true_shape
-                        shape[dimension-baseline] = spatial_shape[dimension-baseline]
+                        shape[axis] = spatial_shape[baseline-1:][axis]
                         local_shape = np.copy(shape)
-                        local_shape[dimension-baseline] = count[dimension-baseline]
-                        if dimension not in dimensions_made:
+                        local_shape[axis] = count[baseline-1:][axis]
+                        if axis not in axes_made:
                             joint_file['scales/{}/1.0'.format(label)] = np.zeros(shape)
-                            dimensions_made.append(dimension)
-                        slices = []
+                            axes_made.append(axis)
                         skip = False
-                        for k in range(len(start) - (baseline-1)): #don't care about tensor parts
+                        slices = []
+                        for k in range(len(shape)): #don't care about tensor parts
                             j = baseline-1 + k
-                            if shape[k] == 1:
-                                slices.append(slice(0,1,1))
-                            else:  
-                                if len(values) != count[j]: skip = True
+                            if k == axis:
+                                if len(values) != count[j] or count[j] > shape[j]: skip = True
                                 slices.append(slice(start[j],start[j]+count[j],1))
+                            else:  
+                                slices.append(slice(0,1,1))
                         if skip: continue
-                        joint_file['scales/{}/1.0'.format(label)][slices[0], slices[1], slices[2]] = values.squeeze().reshape(local_shape)
+                        reshaped_values =  values.squeeze().reshape(local_shape)
+                        joint_file['scales/{}/1.0'.format(label)][slices[0], slices[1], slices[2]] = reshaped_values
 
 
 
@@ -173,10 +177,11 @@ def merge_data(joint_file, proc_path):
             spatial_slices = tuple(slice(s, s+c) for (s,c) in zip(start, count))
             # Merge maintains same set of writes
             slices = (slice(None),) + spatial_slices
-            if proc_dset.attrs['task_type'] == 'slice':
-                joint_dset[slices] = proc_dset[:]
-            elif proc_dset.attrs['task_type'] == 'sum':
-                joint_dset[slices] += proc_dset[:]
+            if 'task_type' in proc_dset.attrs.keys():
+                if proc_dset.attrs['task_type'] == 'slice':
+                    joint_dset[slices] = proc_dset[:]
+                elif proc_dset.attrs['task_type'] == 'sum':
+                    joint_dset[slices] += proc_dset[:]
 
 def merge_analysis(base_path, cleanup=False):
     """
