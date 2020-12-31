@@ -53,6 +53,7 @@ class d3FileHandler(FileHandler):
         if not self.parallel:
             file.attrs['mpi_rank'] = dist.comm_cart.rank
             file.attrs['mpi_size'] = dist.comm_cart.size
+            file.attrs['min_process'] = self.min_process[0]
 
         # Scales
         scale_group = file.create_group('scales')
@@ -115,16 +116,23 @@ class d3FileHandler(FileHandler):
                     sn = lookup = 'constant'
                 else:
                     subaxis = axis - basis.axis
+                    full_data = None
                     if layout.grid_space[axis]:
                         sn = basis.coordsystem.coords[subaxis].name
                         data = basis.local_grids(scales)[subaxis].ravel()
+                        full_data = basis.global_grids(scales)[subaxis]
                     else:
                         sn = 'k' + basis.coordsystem.coords[subaxis].name
                         data = basis.local_elements()[subaxis].ravel()
+                        full_data = np.arange(basis.global_shape(layout, scales)[subaxis])
                     lookup = 'hash_' + hashlib.sha1(data).hexdigest()
                     if lookup not in scale_group:
                         scale_group.create_dataset(name=lookup, data=data)
                         scale_group[lookup].make_scale()
+                    if self.min_process[0] == self.dist.comm_cart.rank:
+                        key = '{}/{:.1f}'.format(sn, scales[0])
+                        if key not in scale_group:
+                            scale_group['{}/{:.1f}'.format(sn, scales[0])] = full_data
                 scale = scale_group[lookup]
                 dset.dims[axis+1].label = sn
                 dset.dims[axis+1].attach_scale(scale)

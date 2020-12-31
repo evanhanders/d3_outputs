@@ -65,8 +65,13 @@ def merge_setup(joint_file, proc_paths):
     """
     proc_path = proc_paths[0]
     proc_path = pathlib.Path(proc_path)
-    logger.info("Merging setup from {}".format(proc_path))
 
+    min_process = 0
+    with h5py.File(str(proc_path), mode='r') as proc_file:
+        min_process = proc_file.attrs['min_process'][()]
+    if min_process != 0:
+        logger.info("Merging setup from {}".format(proc_path))
+        proc_path = proc_paths[min_process]
     with h5py.File(str(proc_path), mode='r') as proc_file:
         # File metadata
         try:
@@ -99,58 +104,6 @@ def merge_setup(joint_file, proc_paths):
             joint_dset.attrs['constant'] = proc_dset.attrs['constant']
             joint_dset.attrs['grid_space'] = proc_dset.attrs['grid_space']
             joint_dset.attrs['scales'] = proc_dset.attrs['scales']
-
-    #Construct basis grids; this is messy, need to clean it up, but it works for now.
-    axes_made = []
-    for f in proc_paths:
-        with h5py.File(pathlib.Path(f), 'r') as piece_file:
-            proc_tasks = piece_file['tasks']
-            true_shape = np.inf
-            for taskname in proc_tasks:
-                proc_dset = proc_tasks[taskname]
-                spatial_shape = proc_dset.attrs['global_shape']
-                if len(spatial_shape) < true_shape:
-                    true_shape = len(spatial_shape)
-                continue
-            for taskname in proc_tasks:
-                proc_dset = proc_tasks[taskname]
-                spatial_shape = proc_dset.attrs['global_shape']
-                # Dimension scales
-                start = proc_dset.attrs['start']
-                count = proc_dset.attrs['count']
-                constant = proc_dset.attrs['constant']
-                baseline = len(proc_dset.dims) - true_shape 
-                for i, proc_dim in enumerate(proc_dset.dims):
-                    if len(proc_dim.values()) == 0:
-                        continue
-                    label = proc_dim.label
-                    values = proc_dim.values()[0][()]
-                    dimension = proc_dim._dimension
-                    axis = dimension-baseline
-                    if axis < 0: continue
-                    if spatial_shape[axis] > 1 and np.prod(count[1:]) > 1:
-                        #The baseline-1: logic allows for arbitrary rank vectors
-                        shape = [1]*true_shape
-                        shape[axis] = spatial_shape[baseline-1:][axis]
-                        local_shape = np.copy(shape)
-                        local_shape[axis] = count[baseline-1:][axis]
-                        if axis not in axes_made:
-                            joint_file['scales/{}/1.0'.format(label)] = np.zeros(shape)
-                            axes_made.append(axis)
-                        skip = False
-                        slices = []
-                        for k in range(len(shape)): #don't care about tensor parts
-                            j = baseline-1 + k
-                            if k == axis:
-                                if len(values) != count[j] or count[j] > shape[j]: skip = True
-                                slices.append(slice(start[j],start[j]+count[j],1))
-                            else:  
-                                slices.append(slice(0,1,1))
-                        if skip: continue
-                        reshaped_values =  values.squeeze().reshape(local_shape)
-                        joint_file['scales/{}/1.0'.format(label)][slices[0], slices[1], slices[2]] = reshaped_values
-
-
 
 def merge_data(joint_file, proc_path):
     """
