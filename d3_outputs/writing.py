@@ -69,6 +69,13 @@ class d3FileHandler(FileHandler):
 
         # Tasks
         task_group =  file.create_group('tasks')
+        unique_bases = []
+        for task_num, task in enumerate(self.tasks):
+            op = task['operator']
+            for axis in range(dist.dim):
+                basis = op.domain.full_bases[axis]
+                if basis not in unique_bases and basis is not None:
+                    unique_bases.append(basis)
         for task_num, task in enumerate(self.tasks):
             op = task['operator']
             layout = task['layout']
@@ -130,9 +137,12 @@ class d3FileHandler(FileHandler):
                         scale_group.create_dataset(name=lookup, data=data)
                         scale_group[lookup].make_scale()
                     if self.min_process[0] == self.dist.comm_cart.rank:
-                        key = '{}/{:.1f}'.format(sn, scales[0])
+                        if len(unique_bases) > 1:
+                            key = '{}_{}/{:.1f}'.format(sn, unique_bases.index(basis), scales[0])
+                        else:
+                            key = '{}/{:.1f}'.format(sn, scales[0])
                         if key not in scale_group:
-                            scale_group['{}/{:.1f}'.format(sn, scales[0])] = full_data
+                            scale_group[key] = full_data
                 scale = scale_group[lookup]
                 dset.dims[axis+1].label = sn
                 dset.dims[axis+1].attach_scale(scale)
