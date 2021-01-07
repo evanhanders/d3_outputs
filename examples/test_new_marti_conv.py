@@ -23,7 +23,7 @@ L_dealias = 1
 Nmax = 15
 N_dealias = 1
 dt = 1.5e-4
-t_end = 1
+t_end = 0.5
 ts = timesteppers.SBDF4
 dtype = np.float64
 
@@ -125,12 +125,12 @@ for handler, op, op_comm in zip([equatorial, meridional, profile], [eq_slicer, a
     handler.add_task(T, extra_op=op, name='T', layout='g', extra_op_comm=op_comm)
     handler.add_task(dot(ez, curl(u)), extra_op=op, name='z_vort', layout='g', extra_op_comm=op_comm)
     handler.add_task(u, extra_op=op, name='u', layout='g', extra_op_comm=op_comm)
-meridional.add_task(T, extra_op=mer_slicer1, name='T(φ=0)', layout='g', extra_op_comm=False)
-meridional.add_task(T, extra_op=mer_slicer2, name='T(φ=pi)', layout='g', extra_op_comm=False)
-meridional.add_task(u, extra_op=mer_slicer1, name='u(φ=0)', layout='g', extra_op_comm=False)
-meridional.add_task(u, extra_op=mer_slicer2, name='u(φ=pi)', layout='g', extra_op_comm=False)
-meridional.add_task(dot(ez, curl(u)), extra_op=mer_slicer1, name='z_vort(φ=0)', layout='g', extra_op_comm=False)
-meridional.add_task(dot(ez, curl(u)), extra_op=mer_slicer2, name='z_vort(φ=pi)', layout='g', extra_op_comm=False)
+meridional.add_task(T, extra_op=mer_slicer1, name='T(phi=0)', layout='g', extra_op_comm=False)
+meridional.add_task(T, extra_op=mer_slicer2, name='T(phi=pi)', layout='g', extra_op_comm=False)
+meridional.add_task(u, extra_op=mer_slicer1, name='u(phi=0)', layout='g', extra_op_comm=False)
+meridional.add_task(u, extra_op=mer_slicer2, name='u(phi=pi)', layout='g', extra_op_comm=False)
+meridional.add_task(dot(ez, curl(u)), extra_op=mer_slicer1, name='z_vort(phi=0)', layout='g', extra_op_comm=False)
+meridional.add_task(dot(ez, curl(u)), extra_op=mer_slicer2, name='z_vort(phi=pi)', layout='g', extra_op_comm=False)
 
 ORI = extra_ops.OutputRadialInterpolate
 shell = d3FileHandler(solver, '{:s}/shell_slice'.format(output_dir), max_writes=40, sim_dt=0.05)
