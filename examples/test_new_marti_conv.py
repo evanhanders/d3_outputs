@@ -18,7 +18,7 @@ config['linear algebra']['MATRIX_FACTORIZER'] = 'SuperLUNaturalFactorizedTranspo
 
 # Parameters
 radius = 1
-Lmax = 15
+Lmax = 14
 L_dealias = 1
 Nmax = 15
 N_dealias = 1
@@ -44,8 +44,7 @@ Prandtl = 1
 # Bases
 c = coords.SphericalCoordinates('phi', 'theta', 'r')
 d = distributor.Distributor((c,), mesh=mesh)
-b = basis.BallBasis(c, (2*(Lmax+1), Lmax+1, Nmax+1), radius=radius, dtype=dtype)
-bk2 = basis.BallBasis(c, (2*(Lmax+1), Lmax+1, Nmax+1), k=2, radius=radius, dtype=dtype)
+b = basis.BallBasis(c, (2*(Lmax+2), Lmax+1, Nmax+1), radius=radius, dtype=dtype)
 b_S2 = b.S2_basis()
 phi, theta, r = b.local_grids((1, 1, 1))
 
@@ -107,44 +106,56 @@ solver.stop_sim_time = t_end
 # Analysis
 from d3_outputs import extra_ops
 from d3_outputs.writing      import d3FileHandler
-output_dir = './'
+output_dir = './test_outputs/'
+if MPI.COMM_WORLD.rank == 0:
+    import os
+    if not os.path.exists('{:s}/'.format(output_dir)):
+        os.makedirs('{:s}/'.format(output_dir))
+    logdir = os.path.join(output_dir,'logs')
+    if not os.path.exists(logdir):
+        os.mkdir(logdir)
 vol_averager       = extra_ops.BallVolumeAverager(p)
 azimuthal_averager = extra_ops.PhiAverager(p)
-radialProfile_averager = extra_ops.PhiThetaAverager(p)
+radial_profile_averager = extra_ops.PhiThetaAverager(p)
 eq_slicer = extra_ops.EquatorSlicer(p)
 mer_slicer1 = extra_ops.MeridionSlicer(p, phi_target=0)
 mer_slicer2 = extra_ops.MeridionSlicer(p, phi_target=np.pi)
 
+z_vort = dot(ez, curl(u))
+z_vort.store_last = True
+
 scalars = d3FileHandler(solver, '{:s}/scalar'.format(output_dir), max_writes=np.inf, iter=10)
 scalars.add_task(0.5*dot(u, u), extra_op=vol_averager, name='KE', layout='g', extra_op_comm=True) #extra_op_comm=True so we only write one scalar file rather than Ncpu files
 
-equatorial = d3FileHandler(solver, '{:s}/eq_slice'.format(output_dir), max_writes=40, sim_dt=0.05)
-meridional = d3FileHandler(solver, '{:s}/mer_slice'.format(output_dir), max_writes=40, sim_dt=0.05)
-profile    = d3FileHandler(solver, '{:s}/profiles'.format(output_dir), max_writes=40, sim_dt=0.05)
-for handler, op, op_comm in zip([equatorial, meridional, profile], [eq_slicer, azimuthal_averager, radialProfile_averager], [False, False, True]):
-    handler.add_task(T, extra_op=op, name='T', layout='g', extra_op_comm=op_comm)
-    handler.add_task(dot(ez, curl(u)), extra_op=op, name='z_vort', layout='g', extra_op_comm=op_comm)
-    handler.add_task(u, extra_op=op, name='u', layout='g', extra_op_comm=op_comm)
-meridional.add_task(T, extra_op=mer_slicer1, name='T(phi=0)', layout='g', extra_op_comm=False)
-meridional.add_task(T, extra_op=mer_slicer2, name='T(phi=pi)', layout='g', extra_op_comm=False)
-meridional.add_task(u, extra_op=mer_slicer1, name='u(phi=0)', layout='g', extra_op_comm=False)
-meridional.add_task(u, extra_op=mer_slicer2, name='u(phi=pi)', layout='g', extra_op_comm=False)
-meridional.add_task(dot(ez, curl(u)), extra_op=mer_slicer1, name='z_vort(phi=0)', layout='g', extra_op_comm=False)
-meridional.add_task(dot(ez, curl(u)), extra_op=mer_slicer2, name='z_vort(phi=pi)', layout='g', extra_op_comm=False)
-
 ORI = extra_ops.OutputRadialInterpolate
-shell = d3FileHandler(solver, '{:s}/shell_slice'.format(output_dir), max_writes=40, sim_dt=0.05)
-shell.add_task(T(r=0.95), extra_op=ORI(T, T(r=0.95)), name='T_r0.95', layout='g')
-shell.add_task(dot(ez, curl(u))(r=0.95), extra_op=ORI(T, dot(ez, curl(u))(r=0.95)), name='z_vort_r0.95', layout='g')
-shell.add_task(angComp(u(r=0.95)), extra_op=ORI(T, angComp(u(r=0.95))), name='u_S2', layout='g')
-shell.add_task(u(r=0.95), extra_op=ORI(T, u(r=0.95)), name='u_vector', layout='g')
+slices = d3FileHandler(solver, '{:s}/slices'.format(output_dir), max_writes=40, sim_dt=0.05)
+slices.add_task(T,      extra_op=eq_slicer, name='T_eq', layout='g', extra_op_comm=False)
+slices.add_task(z_vort, extra_op=eq_slicer, name='z_vort_eq', layout='g', extra_op_comm=False)
+slices.add_task(u,      extra_op=eq_slicer, name='u_eq', layout='g', extra_op_comm=False)
+slices.add_task(T,      extra_op=azimuthal_averager, name='T_az_avg', layout='g', extra_op_comm=False)
+slices.add_task(z_vort, extra_op=azimuthal_averager, name='z_vort_az_avg', layout='g', extra_op_comm=False)
+slices.add_task(u,      extra_op=azimuthal_averager, name='u_az_avg', layout='g', extra_op_comm=False)
+slices.add_task(T, extra_op=mer_slicer1, name='T(phi=0)', layout='g', extra_op_comm=False)
+slices.add_task(T, extra_op=mer_slicer2, name='T(phi=pi)', layout='g', extra_op_comm=False)
+slices.add_task(u, extra_op=mer_slicer1, name='u(phi=0)', layout='g', extra_op_comm=False)
+slices.add_task(u, extra_op=mer_slicer2, name='u(phi=pi)', layout='g', extra_op_comm=False)
+slices.add_task(dot(ez, curl(u)), extra_op=mer_slicer1, name='z_vort(phi=0)', layout='g', extra_op_comm=False)
+slices.add_task(dot(ez, curl(u)), extra_op=mer_slicer2, name='z_vort(phi=pi)', layout='g', extra_op_comm=False)
+slices.add_task(T(r=0.95), extra_op=ORI(T, T(r=0.95)), name='T_r0.95', layout='g')
+slices.add_task(dot(ez, curl(u))(r=0.95), extra_op=ORI(T, dot(ez, curl(u))(r=0.95)), name='z_vort_r0.95', layout='g')
+slices.add_task(angComp(u(r=0.95)), extra_op=ORI(T, angComp(u(r=0.95))), name='u_S2_r0.95', layout='g')
+slices.add_task(u(r=0.95), extra_op=ORI(T, u(r=0.95)), name='u_r0.95', layout='g')
 
-checkpoint = solver.evaluator.add_file_handler('{:s}/checkpoint'.format(output_dir), max_writes=2, iter=1000)
-#checkpoint = solver.evaluator.add_file_handler('{:s}/checkpoint'.format(output_dir), max_writes=2, sim_dt=50*t_buoy)
+profiles = d3FileHandler(solver, '{:s}/profiles'.format(output_dir), max_writes=40, sim_dt=0.05)
+profiles.add_task(T,      extra_op=radial_profile_averager, name='T_eq', layout='g', extra_op_comm=True)
+profiles.add_task(z_vort, extra_op=radial_profile_averager, name='z_vort_eq', layout='g', extra_op_comm=True)
+profiles.add_task(u,      extra_op=radial_profile_averager, name='u_eq', layout='g', extra_op_comm=True)
+
+checkpoint = d3FileHandler(solver, '{:s}/checkpoint'.format(output_dir), max_writes=2, iter=1000)
 checkpoint.add_task(T, name='T', scales=1, layout='c')
 checkpoint.add_task(u, name='u', scales=1, layout='c')
 
-analysis_tasks = [scalars, equatorial, meridional, profile, shell]
+analysis_tasks = [scalars, slices, profiles]
 
 
 # Main loop
