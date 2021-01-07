@@ -1,5 +1,4 @@
 
-
 import numpy as np
 from dedalus.core import coords, distributor, basis, field, operators, problems, solvers, timesteppers, arithmetic
 from dedalus.tools import logging
@@ -19,15 +18,24 @@ config['linear algebra']['MATRIX_FACTORIZER'] = 'SuperLUNaturalFactorizedTranspo
 
 # Parameters
 radius = 1
-Lmax = 15
+Lmax = 14
 L_dealias = 1
 Nmax = 15
 N_dealias = 1
-dt = 8e-5
-t_end = 1
-ts = timesteppers.SBDF2
+dt = 1.5e-4
+t_end = 0.5
+ts = timesteppers.SBDF4
 dtype = np.float64
-mesh = None
+
+comm = MPI.COMM_WORLD
+rank = comm.rank
+ncpu = comm.size
+log2 = np.log2(ncpu)
+if log2 == int(log2):
+    mesh = [int(2**np.ceil(log2/2)),int(2**np.floor(log2/2))]
+else:
+    mesh = None
+logger.info("running on processor mesh={}".format(mesh))
 
 Ekman = 3e-4
 Rayleigh = 95
@@ -36,8 +44,7 @@ Prandtl = 1
 # Bases
 c = coords.SphericalCoordinates('phi', 'theta', 'r')
 d = distributor.Distributor((c,), mesh=mesh)
-b = basis.BallBasis(c, (2*(Lmax+1), Lmax+1, Nmax+1), radius=radius, dtype=dtype)
-bk2 = basis.BallBasis(c, (2*(Lmax+1), Lmax+1, Nmax+1), k=2, radius=radius, dtype=dtype)
+b = basis.BallBasis(c, (2*(Lmax+2), Lmax+1, Nmax+1), radius=radius, dtype=dtype)
 b_S2 = b.S2_basis()
 phi, theta, r = b.local_grids((1, 1, 1))
 
@@ -74,6 +81,7 @@ dot = lambda A, B: arithmetic.DotProduct(A, B)
 cross = lambda A, B: arithmetic.CrossProduct(A, B)
 ddt = lambda A: operators.TimeDerivative(A)
 LiftTau = lambda A: operators.LiftTau(A, b, -1)
+angComp = lambda A, i=0: operators.AngularComponent(A, i)
 
 # Problem
 def eq_eval(eq_str):
@@ -96,42 +104,71 @@ solver = solvers.InitialValueSolver(problem, ts)
 solver.stop_sim_time = t_end
 
 # Analysis
-from d3_outputs.averaging    import BallVolumeAverager, PhiAverager, PhiThetaAverager, EquatorSlicer, SphericalShellCommunicator
-from d3_outputs.writing      import HandlerWriter
-output_dir = './'
-scalars = solver.evaluator.add_dictionary_handler(iter=10)
-scalars.add_task(0.5*dot(u, u), name='KE', layout='g')
+from d3_outputs import extra_ops
+from d3_outputs.writing      import d3FileHandler
+output_dir = './test_outputs/'
+if MPI.COMM_WORLD.rank == 0:
+    import os
+    if not os.path.exists('{:s}/'.format(output_dir)):
+        os.makedirs('{:s}/'.format(output_dir))
+    logdir = os.path.join(output_dir,'logs')
+    if not os.path.exists(logdir):
+        os.mkdir(logdir)
+vol_averager       = extra_ops.BallVolumeAverager(p)
+azimuthal_averager = extra_ops.PhiAverager(p)
+radial_profile_averager = extra_ops.PhiThetaAverager(p)
+eq_slicer = extra_ops.EquatorSlicer(p)
+mer_slicer1 = extra_ops.MeridionSlicer(p, phi_target=0)
+mer_slicer2 = extra_ops.MeridionSlicer(p, phi_target=np.pi)
 
-visuals = solver.evaluator.add_dictionary_handler(sim_dt=0.05)
-visuals.add_task(T, name='T', layout='g')
-visuals.add_task(dot(ez, curl(u)), name='z_vort', layout='g')
+z_vort = dot(ez, curl(u))
+z_vort.store_last = True
 
-shells = solver.evaluator.add_dictionary_handler(sim_dt=0.05)
-shells.add_task(T(r=0.95), name='T_r0.95', layout='g')
-shells.add_task(dot(ez, curl(u))(r=0.95), name='z_vort_r0.95', layout='g')
+scalars = d3FileHandler(solver, '{:s}/scalar'.format(output_dir), max_writes=np.inf, iter=10)
+scalars.add_task(0.5*dot(u, u), extra_op=vol_averager, name='KE', layout='g', extra_op_comm=True) #extra_op_comm=True so we only write one scalar file rather than Ncpu files
 
-vol_averager       = BallVolumeAverager(p)
-azimuthal_averager = PhiAverager(p)
-radialProfile_averager = PhiThetaAverager(p)
-eq_slicer = EquatorSlicer(p)
-shell_comm = SphericalShellCommunicator(p)
+ORI = extra_ops.OutputRadialInterpolate
+slices = d3FileHandler(solver, '{:s}/slices'.format(output_dir), max_writes=40, sim_dt=0.05)
+slices.add_task(T,      extra_op=eq_slicer, name='T_eq', layout='g', extra_op_comm=False)
+slices.add_task(z_vort, extra_op=eq_slicer, name='z_vort_eq', layout='g', extra_op_comm=False)
+slices.add_task(u,      extra_op=eq_slicer, name='u_eq', layout='g', extra_op_comm=False)
+slices.add_task(T,      extra_op=azimuthal_averager, name='T_az_avg', layout='g', extra_op_comm=False)
+slices.add_task(z_vort, extra_op=azimuthal_averager, name='z_vort_az_avg', layout='g', extra_op_comm=False)
+slices.add_task(u,      extra_op=azimuthal_averager, name='u_az_avg', layout='g', extra_op_comm=False)
+slices.add_task(T, extra_op=mer_slicer1, name='T(phi=0)', layout='g', extra_op_comm=False)
+slices.add_task(T, extra_op=mer_slicer2, name='T(phi=pi)', layout='g', extra_op_comm=False)
+slices.add_task(u, extra_op=mer_slicer1, name='u(phi=0)', layout='g', extra_op_comm=False)
+slices.add_task(u, extra_op=mer_slicer2, name='u(phi=pi)', layout='g', extra_op_comm=False)
+slices.add_task(dot(ez, curl(u)), extra_op=mer_slicer1, name='z_vort(phi=0)', layout='g', extra_op_comm=False)
+slices.add_task(dot(ez, curl(u)), extra_op=mer_slicer2, name='z_vort(phi=pi)', layout='g', extra_op_comm=False)
+slices.add_task(T(r=0.95), extra_op=ORI(T, T(r=0.95)), name='T_r0.95', layout='g')
+slices.add_task(dot(ez, curl(u))(r=0.95), extra_op=ORI(T, dot(ez, curl(u))(r=0.95)), name='z_vort_r0.95', layout='g')
+slices.add_task(angComp(u(r=0.95)), extra_op=ORI(T, angComp(u(r=0.95))), name='u_S2_r0.95', layout='g')
+slices.add_task(u(r=0.95), extra_op=ORI(T, u(r=0.95)), name='u_r0.95', layout='g')
 
-scalarWriter  = HandlerWriter(scalars, vol_averager, output_dir, 'scalar', max_writes=np.inf)  
-esliceWriter  = HandlerWriter(visuals, eq_slicer, output_dir, 'eq_slice', max_writes=40)  
-msliceWriter  = HandlerWriter(visuals, azimuthal_averager, output_dir, 'mer_slice', max_writes=40)  
-profileWriter  = HandlerWriter(visuals, radialProfile_averager, output_dir, 'profiles', max_writes=40)  
-sshellWriter  = HandlerWriter(shells, shell_comm, output_dir, 'shell_slice', max_writes=40)  
+profiles = d3FileHandler(solver, '{:s}/profiles'.format(output_dir), max_writes=40, sim_dt=0.05)
+profiles.add_task(T,      extra_op=radial_profile_averager, name='T_eq', layout='g', extra_op_comm=True)
+profiles.add_task(z_vort, extra_op=radial_profile_averager, name='z_vort_eq', layout='g', extra_op_comm=True)
+profiles.add_task(u,      extra_op=radial_profile_averager, name='u_eq', layout='g', extra_op_comm=True)
 
-writers = [scalarWriter, esliceWriter, msliceWriter, profileWriter, sshellWriter]
+checkpoint = d3FileHandler(solver, '{:s}/checkpoint'.format(output_dir), max_writes=2, iter=1000)
+checkpoint.add_task(T, name='T', scales=1, layout='c')
+checkpoint.add_task(u, name='u', scales=1, layout='c')
+
+analysis_tasks = [scalars, slices, profiles]
+
 
 # Main loop
 start_time = time.time()
 while solver.ok:
     solver.step(dt)
-    for writer in writers:
-        writer.process(solver, dt)
     if solver.iteration % 10 == 0:
-        E0 = vol_averager.volume*scalarWriter.tasks['KE']
+        E0 = vol_averager.volume*vol_averager(scalars.task_dict['KE']['out'], comm=True)
         logger.info("t = %f, E = %e" %(solver.sim_time, E0))
 end_time = time.time()
 print('Run time:', end_time-start_time)
+print('mering data')
+
+from d3_outputs import post
+for t in analysis_tasks:
+    post.merge_analysis(t.base_path)
