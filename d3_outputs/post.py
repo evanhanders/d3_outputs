@@ -70,8 +70,8 @@ def merge_setup(joint_file, proc_paths):
     with h5py.File(str(proc_path), mode='r') as proc_file:
         min_process = proc_file.attrs['min_process'][()]
     if min_process != 0:
-        logger.info("Merging setup from {}".format(proc_path))
         proc_path = proc_paths[min_process]
+    logger.info("Merging setup from {}".format(proc_path))
     with h5py.File(str(proc_path), mode='r') as proc_file:
         # File metadata
         try:
@@ -90,15 +90,19 @@ def merge_setup(joint_file, proc_paths):
         proc_tasks = proc_file['tasks']
 
         for taskname in proc_tasks:
+            print('got here', taskname)
             # Setup dataset with automatic chunking
             proc_dset = proc_tasks[taskname]
             spatial_shape = proc_dset.attrs['global_shape']
             joint_shape = (writes,) + tuple(spatial_shape)
+            print('about to create dataset')
             joint_dset = joint_tasks.create_dataset(name=proc_dset.name,
                                                     shape=joint_shape,
                                                     dtype=proc_dset.dtype,
                                                     chunks=True)
-            joint_dset[:] = 0
+            if 'task_type' in proc_dset.attrs.keys():
+                if proc_dset.attrs['task_type'] == 'sum':
+                    joint_dset[:] = 0
             # Dataset metadata
             joint_dset.attrs['task_number'] = proc_dset.attrs['task_number']
             joint_dset.attrs['constant'] = proc_dset.attrs['constant']
