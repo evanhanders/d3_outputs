@@ -1,11 +1,11 @@
 """
-This script plots snapshots of the evolution of 2D slices from a 2D simulation in polar geometry.
+This script plots snapshots of the evolution of 2D slices from a 3D spherical geometry simulation.
 
-The fields specified in 'fig_type' are plotted (temperature and enstrophy by default).
-To plot a different set of fields, add a new fig type number, and expand the fig_type if-statement.
+The fields specified in 'fig_type' are plotted (temperature, velocity, and vorticity by default).
+To plot a different set of fields, add a new fig type number, and expand the fig_type if-statements.
 
 Usage:
-    plot_annular_snapshots.py <root_dir> [options]
+    plot_slices.py <root_dir> [options]
 
 Options:
     --data_dir=<dir>                    Name of data handler directory [default: slices]
@@ -16,12 +16,9 @@ Options:
 
     --col_inch=<in>                     Number of inches / column [default: 3]
     --row_inch=<in>                     Number of inches / row [default: 3]
-    --static_cbar                       If flagged, don't evolve the colorbar with time
 
     --fig_type=<fig_type>               Type of figure to plot
-                                            1 - T, u
-                                            2 - u, ω, ωfluc
-                                            3 - partial pressures
+                                            1 - T, u, and vorticity plots in equatorial, orthographic, and meridional projections.
                                         [default: 1]
 """
 from docopt import docopt
