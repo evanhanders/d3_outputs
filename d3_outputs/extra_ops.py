@@ -10,7 +10,7 @@ class GridSlicer:
 
     def __init__(self, field):
         dist = field.dist
-        base_slices = dist.layouts[-1].slices(field.domain, 1)
+        base_slices = dist.layouts[-1].slices(field.domain, field.domain.dealias[0])
         self.slices = []
        
         for i in range(dist.dim):
@@ -39,6 +39,7 @@ class OutputTask:
         field_shape = field['g'].shape
         shape_length  = len(field_shape)
         self.local_shape = []
+        field.require_scales(self.dealias)
         for i in range(shape_length - tensor_length):
             self.local_shape.append(field_shape[i+tensor_length])
         self.global_shape = domain.grid_shape(self.dealias)
