@@ -17,12 +17,12 @@ import h5py
 def make_ball_basis(Nmax, Lmax, radius, dtype=np.float64, dealias=1, mesh=None):
     c    = coords.SphericalCoordinates('φ', 'θ', 'r')
     d    = distributor.Distributor((c,), mesh=mesh)
-    b    = basis.BallBasis(c, (2*(Lmax+2), Lmax+1, Nmax+1), radius=radius, dtype=dtype)
+    b    = basis.BallBasis(c, (2*(Lmax+2), Lmax+1, Nmax+1), radius=radius, dtype=dtype, dealias=(dealias, dealias, dealias))
     φ,  θ,  r  = b.local_grids((dealias, dealias, dealias))
     return c, d, b, φ, θ, r
 
-def create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=False):
-    c, d, b, φ, θ, r = make_ball_basis(Nmax, Lmax, radius, dtype=dtype, mesh=mesh)
+def create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=False, dealias=1):
+    c, d, b, φ, θ, r = make_ball_basis(Nmax, Lmax, radius, dtype=dtype, mesh=mesh, dealias=dealias)
     f = field.Field(dist=d, bases=(b,), dtype=dtype)
     if vector:
         sim_f = field.Field(dist=d, bases=(b,), dtype=dtype, tensorsig=(c,))
@@ -30,6 +30,8 @@ def create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=False):
     else:
         sim_f = field.Field(dist=d, bases=(b,), dtype=dtype)
         tau_f = field.Field(dist=d, bases=(b.S2_basis(),), dtype=dtype)
+    f.require_scales(f.domain.dealias)
+    sim_f.require_scales(sim_f.domain.dealias)
     x = r * np.sin(θ) * np.cos(φ)
     y = r * np.sin(θ) * np.sin(φ)
     z = r * np.cos(θ)
@@ -65,8 +67,9 @@ def create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=False):
 @pytest.mark.parametrize('mesh', [[2,2], [1,4], [4,1]])
 @pytest.mark.parametrize('vector', [True, False])
 @pytest.mark.parametrize('op_comm', [True, False])
-def test_ball_volume_average(Nmax, Lmax, radius, dtype, mesh, vector, op_comm):
-    c, b, d, φ, θ, r, x, y, z, sim_f, solver = create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=vector)
+@pytest.mark.parametrize('dealias', [1, 1.5])
+def test_ball_volume_average(Nmax, Lmax, radius, dtype, mesh, vector, op_comm, dealias):
+    c, b, d, φ, θ, r, x, y, z, sim_f, solver = create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=vector, dealias=dealias)
     #Define averager and output tasks
     vol_averager = extra_ops.BallVolumeAverager(sim_f)
     outputs = d3FileHandler(solver, './testing/', iter=1, max_writes=np.inf)
@@ -101,8 +104,9 @@ def test_ball_volume_average(Nmax, Lmax, radius, dtype, mesh, vector, op_comm):
 @pytest.mark.parametrize('mesh', [[2,2], [1,4], [4,1]])
 @pytest.mark.parametrize('vector', [True, False])
 @pytest.mark.parametrize('op_comm', [True, False])
-def test_ball_phi_average(Nmax, Lmax, radius, dtype, mesh, vector, op_comm):
-    c, b, d, φ, θ, r, x, y, z, sim_f, solver = create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=vector)
+@pytest.mark.parametrize('dealias', [1, 1.5])
+def test_ball_phi_average(Nmax, Lmax, radius, dtype, mesh, vector, op_comm, dealias):
+    c, b, d, φ, θ, r, x, y, z, sim_f, solver = create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=vector, dealias=dealias)
     #Define averager and output tasks
     phi_averager = extra_ops.PhiAverager(sim_f)
     outputs = d3FileHandler(solver, './testing/', iter=1, max_writes=np.inf)
@@ -134,8 +138,9 @@ def test_ball_phi_average(Nmax, Lmax, radius, dtype, mesh, vector, op_comm):
 @pytest.mark.parametrize('mesh', [[2,2], [1,4], [4,1]])
 @pytest.mark.parametrize('vector', [True, False])
 @pytest.mark.parametrize('op_comm', [True, False])
-def test_ball_phitheta_average(Nmax, Lmax, radius, dtype, mesh, vector, op_comm):
-    c, b, d, φ, θ, r, x, y, z, sim_f, solver = create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=vector)
+@pytest.mark.parametrize('dealias', [1, 1.5])
+def test_ball_phitheta_average(Nmax, Lmax, radius, dtype, mesh, vector, op_comm, dealias):
+    c, b, d, φ, θ, r, x, y, z, sim_f, solver = create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=vector, dealias=dealias)
     #Define averager and output tasks
     phitheta_averager = extra_ops.PhiThetaAverager(sim_f)
     outputs = d3FileHandler(solver, './testing/', iter=1, max_writes=np.inf)
@@ -168,8 +173,9 @@ def test_ball_phitheta_average(Nmax, Lmax, radius, dtype, mesh, vector, op_comm)
 @pytest.mark.parametrize('radius', [1])
 @pytest.mark.parametrize('mesh', [[2,2], [1,4], [4,1]])
 @pytest.mark.parametrize('vector', [False, True])
-def test_ball_equator_slicer(Nmax, Lmax, radius, dtype, mesh, vector):
-    c, b, d, φ, θ, r, x, y, z, sim_f, solver = create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=vector)
+@pytest.mark.parametrize('dealias', [1, 1.5])
+def test_ball_equator_slicer(Nmax, Lmax, radius, dtype, mesh, vector, dealias):
+    c, b, d, φ, θ, r, x, y, z, sim_f, solver = create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=vector, dealias=dealias)
     #Define averager and output tasks
     equator_slicer = extra_ops.EquatorSlicer(sim_f)
     outputs = d3FileHandler(solver, './testing/', iter=1, max_writes=np.inf)
@@ -203,8 +209,9 @@ def test_ball_equator_slicer(Nmax, Lmax, radius, dtype, mesh, vector):
 @pytest.mark.parametrize('radius', [1])
 @pytest.mark.parametrize('mesh', [[2,2], [1,4], [4,1]])
 @pytest.mark.parametrize('vector', [False, True])
-def test_ball_meridion_slicer(Nmax, Lmax, radius, dtype, mesh, vector):
-    c, b, d, φ, θ, r, x, y, z, sim_f, solver = create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=vector)
+@pytest.mark.parametrize('dealias', [1, 1.5])
+def test_ball_meridion_slicer(Nmax, Lmax, radius, dtype, mesh, vector, dealias):
+    c, b, d, φ, θ, r, x, y, z, sim_f, solver = create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=vector, dealias=dealias)
     #Define averager and output tasks
     meridion_slicer = extra_ops.MeridionSlicer(sim_f, phi_target=np.pi/2)
     outputs = d3FileHandler(solver, './testing/', iter=1, max_writes=np.inf)
@@ -238,8 +245,9 @@ def test_ball_meridion_slicer(Nmax, Lmax, radius, dtype, mesh, vector):
 @pytest.mark.parametrize('radius', [1])
 @pytest.mark.parametrize('mesh', [[2,2], [1,4], [4,1]])
 @pytest.mark.parametrize('vector', [True, False])
-def test_ball_shell_slicer(Nmax, Lmax, radius, dtype, mesh, vector):
-    c, b, d, φ, θ, r, x, y, z, sim_f, solver = create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=vector)
+@pytest.mark.parametrize('dealias', [1, 1.5])
+def test_ball_shell_slicer(Nmax, Lmax, radius, dtype, mesh, vector, dealias):
+    c, b, d, φ, θ, r, x, y, z, sim_f, solver = create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=vector, dealias=dealias)
     #Define averager and output tasks
     interp_operation = sim_f(r=0.5*radius)
     shell_slicer = extra_ops.OutputRadialInterpolate(sim_f, interp_operation)
@@ -273,9 +281,10 @@ def test_ball_shell_slicer(Nmax, Lmax, radius, dtype, mesh, vector):
 @pytest.mark.parametrize('radius', [1])
 @pytest.mark.parametrize('mesh', [[2,2], [1,4], [4,1]])
 @pytest.mark.parametrize('vector', [True, False])
-def test_ball_kitchen_sink(Nmax, Lmax, radius, dtype, mesh, vector):
+@pytest.mark.parametrize('dealias', [1, 1.5])
+def test_ball_kitchen_sink(Nmax, Lmax, radius, dtype, mesh, vector, dealias):
     """ Test all the slices in one output file """
-    c, b, d, φ, θ, r, x, y, z, sim_f, solver = create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=vector)
+    c, b, d, φ, θ, r, x, y, z, sim_f, solver = create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=vector, dealias=dealias)
     #Define averager and output tasks
     vol_avg = extra_ops.BallVolumeAverager(sim_f)
     phi_avg = extra_ops.PhiAverager(sim_f)
@@ -284,6 +293,7 @@ def test_ball_kitchen_sink(Nmax, Lmax, radius, dtype, mesh, vector):
     mer_slicer = extra_ops.MeridionSlicer(sim_f, phi_target=np.pi/2)
     interp_operation = sim_f(r=0.5*radius)
     shell_slicer = extra_ops.OutputRadialInterpolate(sim_f, interp_operation)
+    sim_f.require_scales(sim_f.domain.dealias)
     outputs = d3FileHandler(solver, './testing/', iter=1, max_writes=np.inf)
     outputs.add_task(sim_f, extra_op=vol_avg, name='sim_f_vol_avg', layout='g')
     outputs.add_task(sim_f, extra_op=phi_avg, name='sim_f_phi_avg', layout='g')
@@ -302,6 +312,7 @@ def test_ball_kitchen_sink(Nmax, Lmax, radius, dtype, mesh, vector):
     dt = 1
     for i in range(10):
         times.append(solver.sim_time)
+        sim_f.require_scales(sim_f.domain.dealias)
         sim_vol_avg.append(np.copy(vol_avg(sim_f, comm=True)))
         sim_phi_avg.append(np.copy(phi_avg(sim_f, comm=True)))
         sim_phiTheta_avg.append(np.copy(phiTheta_avg(sim_f, comm=True)))

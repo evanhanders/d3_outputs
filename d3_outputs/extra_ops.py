@@ -396,7 +396,7 @@ class EquatorSlicer(OutputSlicer):
         super(EquatorSlicer, self).__init__(field)
         θg    = self.basis.global_grid_colatitude(self.dealias[1])
         θl    = self.basis.local_grid_colatitude(self.dealias[1])
-        θ_target   = θg[0,(self.basis.Lmax+1)//2,0]
+        θ_target   = θg[0, np.argmin(np.abs(θg.flatten() - np.pi/2)), 0]
         if θ_target in θl:
             self.i_θ = np.argmin(np.abs(θl[0,:,0] - θ_target))
             self.local_shape = [self.local_shape[0], 1, self.local_shape[2]]
@@ -447,6 +447,7 @@ class OutputRadialInterpolate(OutputTask):
         self.constant = (self.constant[0], self.constant[1], True)
         self.global_shape = [self.global_shape[0], self.global_shape[1], 1]
         output = interp_operator.evaluate()
+        field.require_scales(self.dealias)
         output_shape = output['g'].shape
         self.local_shape = output_shape[len(output.tensorsig):]
         if np.prod(self.local_shape) > 0:
