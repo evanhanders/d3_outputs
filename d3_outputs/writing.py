@@ -33,8 +33,10 @@ class d3FileHandler(FileHandler):
 
         self.evaluator.add_handler(self)
 
-    def add_task(self, op, extra_op=None, extra_op_comm=False, **kw):
-        super(d3FileHandler, self).add_task(op, **kw)
+    def add_task(self, op, extra_op=None, extra_op_comm=False, scales=None, **kw):
+        if scales is None:
+            scales = op.evaluate().domain.dealias
+        super(d3FileHandler, self).add_task(op, scales=scales, **kw)
         task = self.tasks[-1]
         task['extra_op'] = extra_op
         task['extra_op_comm'] = extra_op_comm

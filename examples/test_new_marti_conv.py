@@ -17,15 +17,17 @@ config['linear algebra']['MATRIX_FACTORIZER'] = 'SuperLUNaturalFactorizedTranspo
 
 
 # Parameters
+dealias = 3/2
 radius = 1
 Lmax = 14
-L_dealias = 1
+L_dealias = dealias
 Nmax = 15
-N_dealias = 1
+N_dealias = dealias
 dt = 1.5e-4
 t_end = 0.5
 ts = timesteppers.SBDF4
 dtype = np.float64
+dealias_tuple = (L_dealias, L_dealias, N_dealias)
 
 comm = MPI.COMM_WORLD
 rank = comm.rank
@@ -44,9 +46,9 @@ Prandtl = 1
 # Bases
 c = coords.SphericalCoordinates('phi', 'theta', 'r')
 d = distributor.Distributor((c,), mesh=mesh)
-b = basis.BallBasis(c, (2*(Lmax+2), Lmax+1, Nmax+1), radius=radius, dtype=dtype)
+b = basis.BallBasis(c, (2*(Lmax+2), Lmax+1, Nmax+1), radius=radius, dtype=dtype, dealias=dealias_tuple)
 b_S2 = b.S2_basis()
-phi, theta, r = b.local_grids((1, 1, 1))
+phi, theta, r = b.local_grids(dealias_tuple)
 
 # Fields
 u = field.Field(dist=d, bases=(b,), tensorsig=(c,), dtype=dtype)
@@ -54,14 +56,20 @@ p = field.Field(dist=d, bases=(b,), dtype=dtype)
 T = field.Field(dist=d, bases=(b,), dtype=dtype)
 tau_u = field.Field(dist=d, bases=(b_S2,), tensorsig=(c,), dtype=dtype)
 tau_T = field.Field(dist=d, bases=(b_S2,), dtype=dtype)
+for f in [u, p, T]:
+    f.require_scales(dealias_tuple)
 
 r_vec = field.Field(dist=d, bases=(b,), tensorsig=(c,), dtype=dtype)
+r_vec.require_scales(dealias_tuple)
 r_vec['g'][2] = r
+r_vec = operators.Grid(r_vec).evaluate()
 
 T['g'] = 0.5*(1-r**2) + 0.1/8*np.sqrt(35/np.pi)*r**3*(1-r**2)*(np.cos(3*phi)+np.sin(3*phi))*np.sin(theta)**3
 
 T_source = field.Field(dist=d, bases=(b,), dtype=dtype)
+T_source.require_scales(dealias_tuple)
 T_source['g'] = 3
+T_source = operators.Grid(T_source).evaluate()
 
 # Boundary conditions
 u_r_bc = operators.RadialComponent(operators.interpolate(u,r=1))
@@ -71,8 +79,10 @@ u_perp_bc = operators.RadialComponent(operators.AngularComponent(operators.inter
 
 # Parameters and operators
 ez = field.Field(dist=d, bases=(b,), tensorsig=(c,), dtype=dtype)
+ez.require_scales(dealias_tuple)
 ez['g'][1] = -np.sin(theta)
 ez['g'][2] =  np.cos(theta)
+dez = operators.Grid(ez).evaluate()
 div = lambda A: operators.Divergence(A, index=0)
 lap = lambda A: operators.Laplacian(A, c)
 grad = lambda A: operators.Gradient(A, c)
