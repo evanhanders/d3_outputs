@@ -140,9 +140,9 @@ class d3FileHandler(FileHandler):
                         scale_group[lookup].make_scale()
                     if self.min_process[0] == self.dist.comm_cart.rank:
                         if len(unique_bases) > 1:
-                            key = '{}_{}/{:.1f}'.format(sn, unique_bases.index(basis), scales[0])
+                            key = '{}_{}/{:.1f}'.format(sn, unique_bases.index(basis), scales[subaxis])
                         else:
-                            key = '{}/{:.1f}'.format(sn, scales[0])
+                            key = '{}/{:.1f}'.format(sn, scales[subaxis])
                         if key not in scale_group:
                             scale_group[key] = full_data
                 scale = scale_group[lookup]
