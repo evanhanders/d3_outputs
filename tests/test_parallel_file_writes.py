@@ -5,6 +5,8 @@ import pytest
 import numpy as np
 import functools
 
+from mpi4py import MPI
+
 from dedalus.core import coords, distributor, basis, field, operators, problems, solvers, timesteppers, arithmetic
 from dedalus.tools import logging
 from dedalus.tools.parsing import split_equation
@@ -14,15 +16,17 @@ from d3_outputs.writing import d3FileHandler
 from d3_outputs import post
 import h5py
 
-def make_ball_basis(Nmax, Lmax, radius, dtype=np.float64, dealias=1, mesh=None):
+def make_ball_basis(Nmax, Lmax, radius, dtype=np.float64, dealias=(1,1,1), mesh=None, comm=None):
+    if comm is None:
+        comm = MPI.COMM_WORLD
     c    = coords.SphericalCoordinates('φ', 'θ', 'r')
-    d    = distributor.Distributor((c,), mesh=mesh)
-    b    = basis.BallBasis(c, (2*(Lmax+2), Lmax+1, Nmax+1), radius=radius, dtype=dtype, dealias=(dealias, dealias, dealias))
-    φ,  θ,  r  = b.local_grids((dealias, dealias, dealias))
+    d    = distributor.Distributor((c,), mesh=mesh, comm=comm)
+    b    = basis.BallBasis(c, (2*(Lmax+2), Lmax+1, Nmax+1), radius=radius, dtype=dtype, dealias=dealias)
+    φ,  θ,  r  = b.local_grids(dealias)
     return c, d, b, φ, θ, r
 
-def create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=False, dealias=1):
-    c, d, b, φ, θ, r = make_ball_basis(Nmax, Lmax, radius, dtype=dtype, mesh=mesh, dealias=dealias)
+def create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=False, dealias=(1,1,1), comm=None):
+    c, d, b, φ, θ, r = make_ball_basis(Nmax, Lmax, radius, dtype=dtype, mesh=mesh, dealias=dealias, comm=comm)
     f = field.Field(dist=d, bases=(b,), dtype=dtype)
     if vector:
         sim_f = field.Field(dist=d, bases=(b,), dtype=dtype, tensorsig=(c,))
@@ -67,7 +71,7 @@ def create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=False, dealia
 @pytest.mark.parametrize('mesh', [[2,2], [1,4], [4,1]])
 @pytest.mark.parametrize('vector', [True, False])
 @pytest.mark.parametrize('op_comm', [True, False])
-@pytest.mark.parametrize('dealias', [1, 1.5])
+@pytest.mark.parametrize('dealias', [(1,1,1), (1.5,1.5,1.5), (1,1.5,1.5)])
 def test_ball_volume_average(Nmax, Lmax, radius, dtype, mesh, vector, op_comm, dealias):
     c, b, d, φ, θ, r, x, y, z, sim_f, solver = create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=vector, dealias=dealias)
     #Define averager and output tasks
@@ -104,7 +108,7 @@ def test_ball_volume_average(Nmax, Lmax, radius, dtype, mesh, vector, op_comm, d
 @pytest.mark.parametrize('mesh', [[2,2], [1,4], [4,1]])
 @pytest.mark.parametrize('vector', [True, False])
 @pytest.mark.parametrize('op_comm', [True, False])
-@pytest.mark.parametrize('dealias', [1, 1.5])
+@pytest.mark.parametrize('dealias', [(1,1,1), (1.5,1.5,1.5), (1,1.5,1.5)])
 def test_ball_phi_average(Nmax, Lmax, radius, dtype, mesh, vector, op_comm, dealias):
     c, b, d, φ, θ, r, x, y, z, sim_f, solver = create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=vector, dealias=dealias)
     #Define averager and output tasks
@@ -138,7 +142,7 @@ def test_ball_phi_average(Nmax, Lmax, radius, dtype, mesh, vector, op_comm, deal
 @pytest.mark.parametrize('mesh', [[2,2], [1,4], [4,1]])
 @pytest.mark.parametrize('vector', [True, False])
 @pytest.mark.parametrize('op_comm', [True, False])
-@pytest.mark.parametrize('dealias', [1, 1.5])
+@pytest.mark.parametrize('dealias', [(1,1,1), (1.5,1.5,1.5), (1,1.5,1.5)])
 def test_ball_phitheta_average(Nmax, Lmax, radius, dtype, mesh, vector, op_comm, dealias):
     c, b, d, φ, θ, r, x, y, z, sim_f, solver = create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=vector, dealias=dealias)
     #Define averager and output tasks
@@ -173,7 +177,7 @@ def test_ball_phitheta_average(Nmax, Lmax, radius, dtype, mesh, vector, op_comm,
 @pytest.mark.parametrize('radius', [1])
 @pytest.mark.parametrize('mesh', [[2,2], [1,4], [4,1]])
 @pytest.mark.parametrize('vector', [False, True])
-@pytest.mark.parametrize('dealias', [1, 1.5])
+@pytest.mark.parametrize('dealias', [(1,1,1), (1.5,1.5,1.5), (1,1.5,1.5)])
 def test_ball_equator_slicer(Nmax, Lmax, radius, dtype, mesh, vector, dealias):
     c, b, d, φ, θ, r, x, y, z, sim_f, solver = create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=vector, dealias=dealias)
     #Define averager and output tasks
@@ -209,7 +213,7 @@ def test_ball_equator_slicer(Nmax, Lmax, radius, dtype, mesh, vector, dealias):
 @pytest.mark.parametrize('radius', [1])
 @pytest.mark.parametrize('mesh', [[2,2], [1,4], [4,1]])
 @pytest.mark.parametrize('vector', [False, True])
-@pytest.mark.parametrize('dealias', [1, 1.5])
+@pytest.mark.parametrize('dealias', [(1,1,1), (1.5,1.5,1.5), (1,1.5,1.5)])
 def test_ball_meridion_slicer(Nmax, Lmax, radius, dtype, mesh, vector, dealias):
     c, b, d, φ, θ, r, x, y, z, sim_f, solver = create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=vector, dealias=dealias)
     #Define averager and output tasks
@@ -245,7 +249,7 @@ def test_ball_meridion_slicer(Nmax, Lmax, radius, dtype, mesh, vector, dealias):
 @pytest.mark.parametrize('radius', [1])
 @pytest.mark.parametrize('mesh', [[2,2], [1,4], [4,1]])
 @pytest.mark.parametrize('vector', [True, False])
-@pytest.mark.parametrize('dealias', [1, 1.5])
+@pytest.mark.parametrize('dealias', [(1,1,1), (1.5,1.5,1.5), (1,1.5,1.5)])
 def test_ball_shell_slicer(Nmax, Lmax, radius, dtype, mesh, vector, dealias):
     c, b, d, φ, θ, r, x, y, z, sim_f, solver = create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=vector, dealias=dealias)
     #Define averager and output tasks
@@ -281,7 +285,7 @@ def test_ball_shell_slicer(Nmax, Lmax, radius, dtype, mesh, vector, dealias):
 @pytest.mark.parametrize('radius', [1])
 @pytest.mark.parametrize('mesh', [[2,2], [1,4], [4,1]])
 @pytest.mark.parametrize('vector', [True, False])
-@pytest.mark.parametrize('dealias', [1, 1.5])
+@pytest.mark.parametrize('dealias', [(1,1,1), (1.5,1.5,1.5), (1,1.5,1.5)])
 def test_ball_kitchen_sink(Nmax, Lmax, radius, dtype, mesh, vector, dealias):
     """ Test all the slices in one output file """
     c, b, d, φ, θ, r, x, y, z, sim_f, solver = create_simple_ball_ivp(Nmax, Lmax, radius, dtype, mesh, vector=vector, dealias=dealias)

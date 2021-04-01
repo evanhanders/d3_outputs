@@ -10,7 +10,7 @@ class GridSlicer:
 
     def __init__(self, field):
         dist = field.dist
-        base_slices = dist.layouts[-1].slices(field.domain, field.domain.dealias[0])
+        base_slices = dist.layouts[-1].slices(field.domain, field.domain.dealias)
         self.slices = []
        
         for i in range(dist.dim):
