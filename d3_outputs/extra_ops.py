@@ -8,9 +8,12 @@ from dedalus.tools.parallel import Sync
 
 class GridSlicer:
 
-    def __init__(self, field):
+    def __init__(self, field, dealias=None):
         dist = field.dist
-        base_slices = dist.layouts[-1].slices(field.domain, field.domain.dealias)
+        if dealias is None:
+            base_slices = dist.layouts[-1].slices(field.domain, field.domain.dealias)
+        else:
+            base_slices = dist.layouts[-1].slices(field.domain, dealias)
         self.slices = []
        
         for i in range(dist.dim):
