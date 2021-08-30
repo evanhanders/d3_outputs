@@ -18,9 +18,9 @@ config['linear algebra']['MATRIX_FACTORIZER'] = 'SuperLUNaturalFactorizedTranspo
 # Parameters
 dealias = 3/2
 radius = 1
-Lmax = 15
+Lmax = 16
 L_dealias = dealias
-Nmax = 15
+Nmax = 16
 N_dealias = dealias
 dt = 1.5e-4
 t_end = 0.5
@@ -45,7 +45,7 @@ Prandtl = 1
 # Bases
 c = coords.SphericalCoordinates('phi', 'theta', 'r')
 d = distributor.Distributor((c,), mesh=mesh, dtype=dtype)
-b = basis.BallBasis(c, (2*(Lmax+1), Lmax+1, Nmax+1), radius=radius, dtype=dtype, dealias=dealias_tuple)
+b = basis.BallBasis(c, (2*(Lmax), Lmax, Nmax), radius=radius, dtype=dtype, dealias=dealias_tuple)
 b_S2 = b.S2_basis()
 phi, theta, r = b.local_grids(dealias_tuple)
 
