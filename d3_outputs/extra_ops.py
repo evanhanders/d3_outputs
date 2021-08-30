@@ -14,13 +14,7 @@ class GridSlicer:
             base_slices = dist.layouts[-1].slices(field.domain, field.domain.dealias)
         else:
             base_slices = dist.layouts[-1].slices(field.domain, dealias)
-        self.slices = []
-       
-        for i in range(dist.dim):
-            indices    = [0]*dist.dim
-            indices[i] = slice(None)
-            slice_axis = base_slices[i][tuple(indices)]
-            self.slices.append(slice(slice_axis[0], slice_axis[-1]+1, 1))
+        self.slices = base_slices
 
     def __getitem__(self,index):
         return self.slices[index]

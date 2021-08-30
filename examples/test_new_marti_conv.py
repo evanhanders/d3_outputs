@@ -5,7 +5,6 @@ from dedalus.tools import logging
 from dedalus.tools.parsing import split_equation
 from dedalus.extras.flow_tools import GlobalArrayReducer
 from scipy import sparse
-import dedalus_sphere
 import time
 from mpi4py import MPI
 
@@ -19,7 +18,7 @@ config['linear algebra']['MATRIX_FACTORIZER'] = 'SuperLUNaturalFactorizedTranspo
 # Parameters
 dealias = 3/2
 radius = 1
-Lmax = 14
+Lmax = 15
 L_dealias = dealias
 Nmax = 15
 N_dealias = dealias
@@ -45,8 +44,8 @@ Prandtl = 1
 
 # Bases
 c = coords.SphericalCoordinates('phi', 'theta', 'r')
-d = distributor.Distributor((c,), mesh=mesh)
-b = basis.BallBasis(c, (2*(Lmax+2), Lmax+1, Nmax+1), radius=radius, dtype=dtype, dealias=dealias_tuple)
+d = distributor.Distributor((c,), mesh=mesh, dtype=dtype)
+b = basis.BallBasis(c, (2*(Lmax+1), Lmax+1, Nmax+1), radius=radius, dtype=dtype, dealias=dealias_tuple)
 b_S2 = b.S2_basis()
 phi, theta, r = b.local_grids(dealias_tuple)
 

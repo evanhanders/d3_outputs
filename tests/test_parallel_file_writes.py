@@ -20,7 +20,7 @@ def make_ball_basis(Nmax, Lmax, radius, dtype=np.float64, dealias=(1,1,1), mesh=
     if comm is None:
         comm = MPI.COMM_WORLD
     c    = coords.SphericalCoordinates('φ', 'θ', 'r')
-    d    = distributor.Distributor((c,), mesh=mesh, comm=comm)
+    d    = distributor.Distributor((c,), mesh=mesh, comm=comm, dtype=dtype)
     b    = basis.BallBasis(c, (2*(Lmax+2), Lmax+1, Nmax+1), radius=radius, dtype=dtype, dealias=dealias)
     φ,  θ,  r  = b.local_grids(dealias)
     return c, d, b, φ, θ, r
